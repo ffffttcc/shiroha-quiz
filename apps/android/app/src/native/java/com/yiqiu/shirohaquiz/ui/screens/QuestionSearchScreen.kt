@@ -3,13 +3,17 @@ package com.yiqiu.shirohaquiz.ui.screens
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -122,106 +126,119 @@ fun QuestionSearchScreen(
         )
     }
 
-    Column(
-        modifier = Modifier
-            .verticalScroll(rememberScrollState())
-            .padding(horizontal = ShirohaSpacing.Xl, vertical = ShirohaSpacing.Sm),
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(horizontal = ShirohaSpacing.Xl, vertical = ShirohaSpacing.Sm),
         verticalArrangement = Arrangement.spacedBy(ShirohaSpacing.Lg)
     ) {
-        ShirohaHeader(
-            kicker = "Search",
-            title = "题目搜索",
-            subtitle = "搜题干、选项、答案或解析。"
-        )
-
-        Row(modifier = Modifier.fillMaxWidth()) {
-            ActionPillButton(
-                icon = Icons.Rounded.ArrowBack,
-                text = "返回题库管理",
-                primary = false,
-                onClick = onBack
-            )
-        }
-
-        GlassCard(contentPadding = 16.dp) {
-            Text(
-                text = "搜索范围",
-                style = MaterialTheme.typography.labelLarge,
-                color = ShirohaColors.TextSecondary,
-                fontWeight = FontWeight.SemiBold
-            )
-            Spacer(Modifier.height(8.dp))
-            Surface(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .shirohaNoRippleClickable { showScopeDialog = true },
-                shape = androidx.compose.foundation.shape.RoundedCornerShape(ShirohaRadius.Md),
-                color = ShirohaColors.CardWhite86,
-                border = BorderStroke(1.dp, ShirohaColors.LineStrong)
+        item {
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(ShirohaSpacing.Lg)
             ) {
-                Row(
-                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = scopeLabel,
-                            style = MaterialTheme.typography.titleSmall,
-                            fontWeight = FontWeight.SemiBold,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                        Text(
-                            text = "可切换当前题库、全部题库或指定题库",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                    }
-                    Icon(
-                        imageVector = Icons.Rounded.ExpandMore,
-                        contentDescription = "选择搜索范围",
-                        tint = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size(22.dp)
+                ShirohaHeader(
+                    kicker = "Search",
+                    title = "题目搜索",
+                    subtitle = "搜题干、选项、答案或解析。"
+                )
+
+                Row(modifier = Modifier.fillMaxWidth()) {
+                    ActionPillButton(
+                        icon = Icons.Rounded.ArrowBack,
+                        text = "返回题库管理",
+                        primary = false,
+                        onClick = onBack
                     )
                 }
-            }
-            Spacer(Modifier.height(12.dp))
-            OutlinedTextField(
-                value = query,
-                onValueChange = { query = it },
-                modifier = Modifier.fillMaxWidth(),
-                leadingIcon = {
-                    Icon(
-                        imageVector = Icons.Rounded.Search,
-                        contentDescription = "搜索"
+
+                GlassCard(contentPadding = 16.dp) {
+                    Text(
+                        text = "搜索范围",
+                        style = MaterialTheme.typography.labelLarge,
+                        color = ShirohaColors.TextSecondary,
+                        fontWeight = FontWeight.SemiBold
                     )
-                },
-                placeholder = { Text("搜题干、选项、答案或解析") },
-                singleLine = true
-            )
+                    Spacer(Modifier.height(8.dp))
+                    Surface(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .shirohaNoRippleClickable { showScopeDialog = true },
+                        shape = androidx.compose.foundation.shape.RoundedCornerShape(ShirohaRadius.Md),
+                        color = ShirohaColors.CardWhite86,
+                        border = BorderStroke(1.dp, ShirohaColors.LineStrong)
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = scopeLabel,
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.SemiBold,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                Text(
+                                    text = "可切换当前题库、全部题库或指定题库",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                            Icon(
+                                imageVector = Icons.Rounded.ExpandMore,
+                                contentDescription = "选择搜索范围",
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(22.dp)
+                            )
+                        }
+                    }
+                    Spacer(Modifier.height(12.dp))
+                    OutlinedTextField(
+                        value = query,
+                        onValueChange = { query = it },
+                        modifier = Modifier.fillMaxWidth(),
+                        leadingIcon = {
+                            Icon(
+                                imageVector = Icons.Rounded.Search,
+                                contentDescription = "搜索"
+                            )
+                        },
+                        placeholder = { Text("搜题干、选项、答案或解析") },
+                        singleLine = true
+                    )
+                }
+
+            }
         }
 
         when {
-            query.isBlank() -> SearchEmptyState(
-                title = "输入关键词开始搜索",
-                desc = "可以输入题干片段、选项内容、答案或解析里的关键词。"
-            )
+            query.isBlank() -> item {
+                SearchEmptyState(
+                    title = "输入关键词开始搜索",
+                    desc = "可以输入题干片段、选项内容、答案或解析里的关键词。"
+                )
+            }
 
-            results.isEmpty() -> SearchEmptyState(
-                title = "没有找到相关题目",
-                desc = "可以换一个关键词，或切换到全部题库搜索。"
-            )
+            results.isEmpty() -> item {
+                SearchEmptyState(
+                    title = "没有找到相关题目",
+                    desc = "可以换一个关键词，或切换到全部题库搜索。"
+                )
+            }
 
             else -> {
-                Text(
-                    text = "共找到 ${results.size} 题",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.SemiBold,
-                    color = MaterialTheme.colorScheme.onSurface
-                )
-                results.forEach { result ->
+                item {
+                    Text(
+                        text = "共找到 ${results.size} 题",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                }
+                items(results, key = { it.key }) { result ->
                     val expanded = result.key in expandedResultKeys
                     QuestionSearchResultCard(
                         result = result,
@@ -239,7 +256,7 @@ fun QuestionSearchScreen(
             }
         }
 
-        Spacer(Modifier.height(ShirohaSpacing.Xl))
+        item { Spacer(Modifier.height(ShirohaSpacing.Xl)) }
     }
 }
 
