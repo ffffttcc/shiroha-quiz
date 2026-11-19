@@ -3184,7 +3184,7 @@ private fun NativeImportPreview(
             Spacer(Modifier.height(6.dp))
             SelectionContainer {
                 Text(
-                    text = LatexDisplayFormatter.format(question.question),
+                    text = LatexDisplayFormatter.format(QuizRepository.displayQuestionText(question)),
                     style = MaterialTheme.typography.bodyLarge,
                     fontWeight = FontWeight.SemiBold
                 )
@@ -3745,9 +3745,9 @@ private fun ReviewQuestionEditorContent(
             }
             Spacer(Modifier.height(12.dp))
             OutlinedTextField(
-                value = question.question,
+                value = QuizRepository.editableQuestionText(question),
                 onValueChange = { value ->
-                    onQuestionChange(question.copy(question = value))
+                    onQuestionChange(QuizRepository.applyQuestionTextEdit(question, value))
                 },
                 modifier = Modifier
                     .fillMaxWidth()
@@ -3877,7 +3877,7 @@ private fun ReviewQuestionEditorContent(
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
             Spacer(Modifier.height(8.dp))
-            val detectedBlankCount = MultiBlankSupport.countExplicitBlanks(question.question)
+            val detectedBlankCount = MultiBlankSupport.countExplicitBlanks(QuizRepository.displayQuestionText(question))
             if (question.type == QuestionType.CLOZE) {
                 ClozeAnswerEditor(question = question, onChange = onQuestionChange)
             } else if (question.type == QuestionType.BLANK && question.blankAnswers.isNotEmpty()) {
@@ -3921,7 +3921,7 @@ private fun ReviewQuestionEditorContent(
                             onQuestionChange(
                                 MultiBlankSupport.withBlankAnswers(
                                     question,
-                                    MultiBlankSupport.initialGroups(question.question, question.answer)
+                                    MultiBlankSupport.initialGroups(QuizRepository.displayQuestionText(question), question.answer)
                                 )
                             )
                         }
@@ -4620,7 +4620,7 @@ private fun hasSoftReviewWarning(question: Question, warnings: List<ImportWarnin
 
 private fun hasHardReviewError(question: Question, warnings: List<ImportWarning>): Boolean {
     if (warnings.any { it.level == WarningLevel.ERROR }) return true
-    if (question.question.isBlank()) return true
+    if (QuizRepository.displayQuestionText(question).isBlank()) return true
     val choiceType = question.type in listOf(QuestionType.SINGLE, QuestionType.MULTIPLE)
     if (choiceType && question.options.isEmpty()) return true
     if (question.type == QuestionType.SINGLE && question.answer.size > 1) return true
@@ -4698,7 +4698,7 @@ private fun ReviewFilteredJumpList(
                         )
                         Spacer(Modifier.height(4.dp))
                         Text(
-                            text = question.question.ifBlank { "题干为空" }.take(70),
+                            text = QuizRepository.displayQuestionText(question).ifBlank { "题干为空" }.take(70),
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )

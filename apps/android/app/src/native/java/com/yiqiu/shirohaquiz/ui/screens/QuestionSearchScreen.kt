@@ -424,7 +424,7 @@ private fun QuestionSearchResultCard(
         }
         Spacer(Modifier.height(10.dp))
         Text(
-            text = LatexDisplayFormatter.format(question.question).ifBlank { "（空题干）" },
+            text = LatexDisplayFormatter.format(QuizRepository.displayQuestionText(question)).ifBlank { "（空题干）" },
             style = MaterialTheme.typography.titleMedium,
             fontWeight = FontWeight.SemiBold,
             maxLines = if (expanded) Int.MAX_VALUE else 3,
@@ -482,7 +482,7 @@ private fun QuestionSearchResultCard(
 
 @Composable
 private fun FullQuestionInfo(question: Question) {
-    SearchInfoBlock(label = "题干", text = question.question.ifBlank { "（空题干）" })
+    SearchInfoBlock(label = "题干", text = QuizRepository.displayQuestionText(question).ifBlank { "（空题干）" })
     if (question.images.isNotEmpty()) {
         Spacer(Modifier.height(10.dp))
         QuestionImagesBlock(question.images, maxPreviewHeight = 260.dp, showMeta = true)

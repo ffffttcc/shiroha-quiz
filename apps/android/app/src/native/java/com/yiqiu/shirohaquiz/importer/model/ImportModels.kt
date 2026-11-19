@@ -26,7 +26,9 @@ data class Question(
     val reviewStatus: String = "approved",
     val aiConfidence: Double? = null,
     val warnings: List<String> = emptyList(),
-    val inkStrokes: List<InkStroke> = emptyList()
+    val inkStrokes: List<InkStroke> = emptyList(),
+    /** 材料（阅读/完形原文）内容寻址 id；null = 题干自包含。 */
+    val materialId: String? = null
 )
 
 /** 每个完形填空空位拥有独立的选项、答案和可选解析。 */

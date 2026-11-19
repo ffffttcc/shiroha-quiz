@@ -391,7 +391,7 @@ private fun QuestionPreviewBlock(
     }
     Spacer(Modifier.height(8.dp))
     Text(
-        text = "${question.number}. ${question.question}",
+        text = "${question.number}. ${QuizRepository.displayQuestionText(question)}",
         style = MaterialTheme.typography.bodyLarge,
         fontWeight = FontWeight.SemiBold
     )
@@ -429,7 +429,7 @@ private fun QuestionEditDialog(
     onDismiss: () -> Unit,
     onSave: (Question) -> Unit
 ) {
-    var stem by remember(question.id) { mutableStateOf(question.question) }
+    var stem by remember(question.id) { mutableStateOf(QuizRepository.displayQuestionText(question)) }
     var optionsText by remember(question.id) { mutableStateOf(formatOptions(question.options)) }
     var answerText by remember(question.id) {
         mutableStateOf(question.answer.joinToString(if (question.type == QuestionType.SHORT) "\n\n" else " "))

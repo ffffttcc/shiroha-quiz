@@ -47,7 +47,9 @@ data class QuizBank(
     val id: String,
     val name: String,
     val questions: List<Question>,
-    val groupName: String = DEFAULT_BANK_GROUP_NAME
+    val groupName: String = DEFAULT_BANK_GROUP_NAME,
+    /** 材料 id → 原文（阅读/完形文章），题干里只留残余。 */
+    val materials: Map<String, String> = emptyMap()
 )
 
 data class ExamSummary(
@@ -184,7 +186,8 @@ object QuizRepository {
     private const val KEY_ACTIVE_BANK_ID = "active_bank_id"
     private const val KEY_BANK_INDEX = "bank_index"
     private const val KEY_BANK_STORAGE_VERSION = "bank_storage_version"
-    private const val BANK_STORAGE_VERSION = 1
+    private const val BANK_STORAGE_VERSION = 2
+    private const val BANK_STORAGE_PRE_SPLIT_DIR_NAME = "_pre_split"
     private const val BANK_STORAGE_DIR_NAME = "banks"
     private const val BANK_STORAGE_STAGING_DIR_NAME = ".staging"
     private const val BANK_STORAGE_LEGACY_FILE_NAME = "_legacy_banks.json"
@@ -479,6 +482,7 @@ object QuizRepository {
         val needsQuestionIdIntegrityMigration =
             prefs.getInt(KEY_QUESTION_ID_INTEGRITY_MIGRATION_VERSION, 0) < QUESTION_ID_INTEGRITY_MIGRATION_VERSION
         migrateBankStorageIfNeeded(context, prefs)
+        migrateQuestionMaterialsIfNeeded(context, prefs)
         // 索引模式：启动只解析 KB 级索引，题目体交给后台逐库补全。需要修复题目 id 的老数据走全量。
         val useBankIndex = prefs.getInt(KEY_BANK_STORAGE_VERSION, 0) >= BANK_STORAGE_VERSION &&
             !needsQuestionIdIntegrityMigration
@@ -560,6 +564,7 @@ object QuizRepository {
             restoredStudyRecords
         }
         banks.addAll(sanitizedRestoredBanks)
+        sanitizedRestoredBanks.forEach(::registerMaterials)
         activeBankId = prefs.getString(KEY_ACTIVE_BANK_ID, sanitizedRestoredBanks.firstOrNull()?.id)
             ?.takeIf { id -> sanitizedRestoredBanks.any { it.id == id } }
             ?: sanitizedRestoredBanks.firstOrNull()?.id
@@ -1801,7 +1806,7 @@ object QuizRepository {
                 FavoriteQuestionEntry(
                     bankId = bank.id,
                     bankName = bank.name,
-                    question = question,
+                    question = selfContainedQuestion(question),
                     favoritedAt = System.currentTimeMillis()
                 )
             )
@@ -3144,6 +3149,7 @@ object QuizRepository {
         markAllContentDirty()
         banks.clear()
         banks.addAll(content.banks)
+        content.banks.forEach(::registerMaterials)
         unloadedBankIds.clear()
         indexedBankQuestionCounts.clear()
         content.banks.forEach { bank -> indexedBankQuestionCounts[bank.id] = bank.questions.size }
@@ -3413,7 +3419,7 @@ object QuizRepository {
             validateBackupFields(root, strings = listOf("kind", "app", "exportedBy", "activeBankId"),
                 integers = listOf("version", "schemaVersion", "crossPlatformSchemaVersion"))
             listOf("version", "schemaVersion").forEach { key ->
-                if (root.has(key) && !root.isNull(key)) require(root.getInt(key) in 1..3) { "Unsupported backup version" }
+                if (root.has(key) && !root.isNull(key)) require(root.getInt(key) in 1..4) { "Unsupported backup version" }
             }
             if (root.has("crossPlatformSchemaVersion")) require(root.getInt("crossPlatformSchemaVersion") == 1) {
                 "Unsupported cross-platform schema"
@@ -3805,10 +3811,10 @@ object QuizRepository {
                 else -> require(isRemoteBackupImage(path)) { "Backup image is not self-contained; export an asset ZIP instead" }
             }
         }
-        val embedded = embeddedDataImageRegex.findAll(question.question).toList()
-        require(Regex("data:image/", RegexOption.IGNORE_CASE).findAll(question.question).count() == embedded.size) { "Invalid/unsupported embedded data image" }
+        val embedded = embeddedDataImageRegex.findAll(displayQuestionText(question)).toList()
+        require(Regex("data:image/", RegexOption.IGNORE_CASE).findAll(displayQuestionText(question)).count() == embedded.size) { "Invalid/unsupported embedded data image" }
         embedded.forEach { backupDataImage(it.groupValues[2]) }
-        (listOf(question.question, question.analysis) + question.options.map { it.text }).forEach { text ->
+        (listOf(displayQuestionText(question), question.analysis) + question.options.map { it.text }).forEach { text ->
             backupMarkdownImageRegex.findAll(text).forEach { match ->
                 val path = match.groupValues[1]
                 when {
@@ -3865,11 +3871,11 @@ object QuizRepository {
                 if (installed == path) image else image.copy(localPath = installed, sizeBytes = File(installed).length())
             }
             val withImages = question.copy(images = images)
-            if (!question.question.contains("data:image/", ignoreCase = true)) return withImages
+            if (!displayQuestionText(question).contains("data:image/", ignoreCase = true)) return withImages
             // Reuse the existing embedded-image transformation, but reject its silent failure paths.
             val directory = File(assetDir, "embedded_${UUID.randomUUID()}")
             check(directory.mkdirs()) { "Cannot create embedded image assets" }
-            val matches = embeddedDataImageRegex.findAll(question.question).toList()
+            val matches = embeddedDataImageRegex.findAll(displayQuestionText(question)).toList()
             val converted = convertEmbeddedDataImages(withImages, directory)
             val added = converted.images.drop(images.size)
             check(added.size == matches.size && !converted.question.contains("data:image/", ignoreCase = true)) { "Embedded image conversion would lose data" }
@@ -4088,8 +4094,8 @@ object QuizRepository {
         val root = JSONObject()
         root.put("app", "Shiroha Quiz")
         root.put("kind", kind)
-        root.put("version", 3)
-        root.put("schemaVersion", 3)
+        root.put("version", 4)
+        root.put("schemaVersion", 4)
         root.put("crossPlatformSchemaVersion", 1)
         root.put("exportedBy", "native")
         root.put("exportedAt", System.currentTimeMillis())
@@ -4543,7 +4549,7 @@ object QuizRepository {
     )
 
     private fun convertEmbeddedDataImages(question: Question, assetDir: File): Question {
-        val rawQuestion = question.question
+        val rawQuestion = displayQuestionText(question)
         if (!rawQuestion.contains("data:image/", ignoreCase = true)) return question
 
         var nextOrder = (question.images.maxOfOrNull { it.order } ?: question.images.size) + 1
@@ -4970,7 +4976,7 @@ object QuizRepository {
         return listOf(
             normalize(question.number),
             question.type.name,
-            normalize(question.question),
+            normalize(displayQuestionText(question)),
             question.options.joinToString("|") { option -> "${normalize(option.key)}:${normalize(option.text)}" },
             question.answer.joinToString("|") { normalize(it) },
             question.blankAnswers.joinToString("||") { answers -> answers.joinToString("|") { normalize(it) } },
@@ -5167,7 +5173,7 @@ object QuizRepository {
         return question.id.ifBlank {
             listOf(
                 question.type.name,
-                question.question.trim(),
+                displayQuestionText(question).trim(),
                 question.options.joinToString("|") { option -> "${option.key}:${option.text}" },
                 question.answer.joinToString("|"),
                 question.blankAnswers.joinToString("||") { it.joinToString("|") }
@@ -5384,7 +5390,7 @@ object QuizRepository {
                 bankId = bank?.id,
                 bankName = bank?.name ?: "未命名题库",
                 source = "练习",
-                title = question.question.take(24),
+                title = displayQuestionText(question).take(24),
                 total = 1,
                 correct = if (result.correct) 1 else 0,
                 timestamp = System.currentTimeMillis()
@@ -5408,7 +5414,7 @@ object QuizRepository {
             val nextWrongCount = current.wrongCount + 1
             wrongBook[index] = current.copy(
                 bankName = bankName,
-                question = question,
+                question = selfContainedQuestion(question),
                 lastAnswer = userAnswer,
                 source = source,
                 timestamp = now,
@@ -5427,7 +5433,7 @@ object QuizRepository {
                 WrongQuestionEntry(
                     bankId = bankId,
                     bankName = bankName,
-                    question = question,
+                    question = selfContainedQuestion(question),
                     lastAnswer = userAnswer,
                     source = source,
                     timestamp = now,
@@ -5983,6 +5989,7 @@ object QuizRepository {
         if (current.questions.isNotEmpty()) return false
         if (current.name != loaded.name) return false
         banks[index] = loaded
+        registerMaterials(loaded)
         unloadedBankIds.remove(bankId)
         indexedBankQuestionCounts[bankId] = loaded.questions.size
         return true
@@ -6102,6 +6109,44 @@ object QuizRepository {
     }
 
     /** 同步补全全部库（导出/恢复/练习池等需要全量题目体的入口先调用）。 */
+    // ---- 材料（阅读/完形原文）访问器 ----
+
+    private val materialsById: MutableMap<String, String> =
+        java.util.Collections.synchronizedMap(mutableMapOf<String, String>())
+
+    private fun registerMaterials(bank: QuizBank) {
+        if (bank.materials.isNotEmpty()) materialsById.putAll(bank.materials)
+    }
+
+    /** 材料原文；找不到返回 null（旧数据没有材料，等价于题干自包含）。 */
+    fun materialForQuestion(question: Question): String? {
+        val id = question.materialId?.takeIf { it.isNotBlank() } ?: return null
+        materialsById[id]?.let { return it }
+        banks.forEach { bank ->
+            bank.materials[id]?.let { text ->
+                materialsById[id] = text
+                return text
+            }
+        }
+        return null
+    }
+
+    /** 唯一展示入口：材料 + 残余（逐字不改）；无材料返回原题干。 */
+    fun displayQuestionText(question: Question): String =
+        QuestionText.display(question, materialForQuestion(question))
+
+    /** 编辑框文本：与展示一致，保证用户看到的就是完整题干。 */
+    fun editableQuestionText(question: Question): String =
+        QuestionText.editable(question, materialForQuestion(question))
+
+    /** 编辑写回：仍以材料开头则只存残余，否则整段替换并清掉 materialId。 */
+    fun applyQuestionTextEdit(question: Question, editedText: String): Question =
+        QuestionText.applyEdit(question, materialForQuestion(question), editedText)
+
+    /** 错题本/收藏副本必须自包含：把材料拼平进题干。 */
+    private fun selfContainedQuestion(question: Question): Question =
+        QuestionText.flatten(question, materialForQuestion(question))
+
     // ---- 题库分文件存储（见 docs/存储根治-设计.md）----
 
     private fun bankStorageDir(context: Context): File = File(context.filesDir, BANK_STORAGE_DIR_NAME)
@@ -6190,13 +6235,18 @@ object QuizRepository {
         files.sortedBy { it.name }.forEach { file ->
             runCatching { parseBanksJson(file.readText(Charsets.UTF_8)) }
                 .getOrDefault(emptyList())
-                .let(restored::addAll)
+                .forEach { bank ->
+                    registerMaterials(bank)
+                    restored.add(bank)
+                }
         }
         return restored
     }
 
     private fun readStoredBanks(context: Context, prefs: SharedPreferences): List<QuizBank> {
-        if (prefs.getInt(KEY_BANK_STORAGE_VERSION, 0) >= BANK_STORAGE_VERSION) return readBankStorageFiles(context)
+        // ≥1 就说明题库已经在分文件存储里；即使材料拆分迁移（1→2）失败也必须从文件读，
+        // 否则会退回去读已被清空的 KEY_BANKS，用户会看到空库。
+        if (prefs.getInt(KEY_BANK_STORAGE_VERSION, 0) >= 1) return readBankStorageFiles(context)
         return parseBanksJson(prefs.getString(KEY_BANKS, null))
     }
 
@@ -6231,6 +6281,46 @@ object QuizRepository {
         ) { "无法写入题库索引" }
     }
 
+    /**
+     * 1 → 2：把「文章 + 小题」的题干拆成 材料 + 残余。
+     * 拆前把原文件整份拷到 banks/_pre_split/（全程不覆写，回滚用）；任一步失败不写版本号，下次重试。
+     */
+    private fun migrateQuestionMaterialsIfNeeded(context: Context, prefs: SharedPreferences) {
+        val version = prefs.getInt(KEY_BANK_STORAGE_VERSION, 0)
+        if (version >= BANK_STORAGE_VERSION) return
+        if (version < 1) return
+        val dir = bankStorageDir(context)
+        val files = dir.listFiles()
+            ?.filter { it.isFile && it.extension == "json" && it.name != BANK_STORAGE_LEGACY_FILE_NAME }
+            .orEmpty()
+        if (files.isEmpty()) {
+            prefs.edit().putInt(KEY_BANK_STORAGE_VERSION, BANK_STORAGE_VERSION).commit()
+            return
+        }
+        try {
+            files.forEach { file ->
+                val original = file.readText(Charsets.UTF_8)
+                val bank = parseBanksJson(original).firstOrNull() ?: return@forEach
+                if (bank.materials.isNotEmpty()) return@forEach
+                val outcome = QuestionMaterialSplitter.split(bank.questions)
+                if (outcome.materials.isEmpty()) return@forEach
+                backupOriginalBankFile(context, file.name, original)
+                writeBankStorageFile(context, bank.copy(questions = outcome.questions, materials = outcome.materials))
+            }
+            check(prefs.edit().putInt(KEY_BANK_STORAGE_VERSION, BANK_STORAGE_VERSION).commit()) { "无法写入版本号" }
+        } catch (_: Throwable) {
+            // 失败：不写版本号、不删回滚件，下次启动重试。
+        }
+    }
+
+    private fun backupOriginalBankFile(context: Context, fileName: String, content: String) {
+        val backupDir = File(bankStorageDir(context), BANK_STORAGE_PRE_SPLIT_DIR_NAME)
+        check(backupDir.isDirectory || backupDir.mkdirs()) { "无法创建回滚目录" }
+        val target = File(backupDir, fileName)
+        if (target.exists()) return // 全程不覆写
+        target.writeText(content, Charsets.UTF_8)
+    }
+
     /** 把旧 KEY_BANKS 拆成每库一个文件 + 索引。任一步失败：不写版本号、不清旧值，下次启动可重试。 */
     private fun migrateBankStorageIfNeeded(context: Context, prefs: SharedPreferences) {
         if (prefs.getInt(KEY_BANK_STORAGE_VERSION, 0) >= BANK_STORAGE_VERSION) return
@@ -6244,8 +6334,16 @@ object QuizRepository {
             check(staging.mkdirs()) { "无法创建暂存目录" }
             val parsed = parseBanksJson(legacy)
             parsed.forEach { bank ->
+                // 回滚件：迁移前「未拆分」的原样单库 JSON，全程不覆写。
+                backupOriginalBankFile(context, bankStorageSafeId(bank.id) + ".json", banksToJson(listOf(bank)))
+                val outcome = QuestionMaterialSplitter.split(bank.questions)
+                val target = if (outcome.materials.isEmpty()) {
+                    bank
+                } else {
+                    bank.copy(questions = outcome.questions, materials = outcome.materials)
+                }
                 File(staging, bankStorageSafeId(bank.id) + ".json")
-                    .writeText(banksToJson(listOf(bank)), Charsets.UTF_8)
+                    .writeText(banksToJson(listOf(target)), Charsets.UTF_8)
             }
             staging.listFiles()?.forEach { file ->
                 if (!file.renameTo(File(dir, file.name))) error("无法提交题库文件")
@@ -6263,6 +6361,16 @@ object QuizRepository {
         }
     }
 
+    private fun parseMaterialsJson(json: JSONObject?): Map<String, String> {
+        if (json == null || json.length() == 0) return emptyMap()
+        val materials = LinkedHashMap<String, String>(json.length())
+        json.keys().forEach { id ->
+            val text = json.optString(id)
+            if (id.isNotBlank() && text.isNotEmpty()) materials[id] = text
+        }
+        return materials
+    }
+
     private fun banksToJson(banks: List<QuizBank>, assetMapping: MutableMap<String, BackupAsset>? = null): String {
         val bankArray = JSONArray()
         banks.forEach { bank ->
@@ -6271,6 +6379,11 @@ object QuizRepository {
             bankJson.put("name", bank.name)
             bankJson.put("groupName", normalizeBankGroupName(bank.groupName))
             bankJson.put("questions", questionsToJsonArray(bank.questions, assetMapping))
+            if (bank.materials.isNotEmpty()) {
+                val materialsJson = JSONObject()
+                bank.materials.forEach { (id, text) -> materialsJson.put(id, text) }
+                bankJson.put("materials", materialsJson)
+            }
             bankArray.put(bankJson)
         }
         return bankArray.toString()
@@ -6393,7 +6506,8 @@ object QuizRepository {
                         id = bankJson.optString("id"),
                         name = bankJson.optString("name"),
                         questions = parseQuestionsArray(bankJson.optJSONArray("questions")),
-                        groupName = normalizeBankGroupName(bankJson.optString("groupName", DEFAULT_BANK_GROUP_NAME))
+                        groupName = normalizeBankGroupName(bankJson.optString("groupName", DEFAULT_BANK_GROUP_NAME)),
+                        materials = parseMaterialsJson(bankJson.optJSONObject("materials"))
                     )
                 )
             }
@@ -6723,6 +6837,7 @@ object QuizRepository {
                 number = questionJson.optString("number"),
                 type = questionType,
                 question = normalizeJsonMultilineText(questionJson.optString("question")),
+                materialId = questionJson.optString("materialId").ifBlank { null },
                 options = options,
                 answer = if (questionType == QuestionType.CLOZE) clozeItems.map { it.answer } else answers,
                 clozeItems = clozeItems,
@@ -6869,6 +6984,7 @@ object QuizRepository {
         questionJson.put("number", question.number)
         questionJson.put("type", question.type.name)
         questionJson.put("question", question.question)
+        question.materialId?.takeIf { it.isNotBlank() }?.let { questionJson.put("materialId", it) }
         questionJson.put("analysis", question.analysis)
         questionJson.put("category", question.category)
         question.score?.takeIf { it.isFinite() }?.let { questionJson.put("score", it) }

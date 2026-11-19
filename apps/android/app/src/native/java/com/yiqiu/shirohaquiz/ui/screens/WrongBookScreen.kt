@@ -937,7 +937,7 @@ private fun WrongQuestionPreview(entry: WrongQuestionEntry) {
 
 private fun wrongQuestionDisplayTitle(entry: WrongQuestionEntry): String {
     val number = entry.question.number.trim()
-    val stem = entry.question.question.trim()
+    val stem = QuizRepository.displayQuestionText(entry.question).trim()
     val safeNumber = number.takeUnless(::isSuspiciousWrongQuestionNumber)
 
     return when {

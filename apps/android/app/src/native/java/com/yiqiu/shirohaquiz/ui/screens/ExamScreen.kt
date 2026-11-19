@@ -1097,7 +1097,7 @@ private fun examDisplayOptions(
         (question.type == QuestionType.SINGLE || question.type == QuestionType.MULTIPLE) &&
         question.options.size > 1
     val orderedOptions = if (canShuffle) {
-        val seedSource = "${question.id}|${question.number}|${question.question}"
+        val seedSource = question.id
         val seed = sessionSeed xor seedSource.hashCode().toLong()
         question.options.toMutableList().also { options ->
             java.util.Collections.shuffle(options, java.util.Random(seed))

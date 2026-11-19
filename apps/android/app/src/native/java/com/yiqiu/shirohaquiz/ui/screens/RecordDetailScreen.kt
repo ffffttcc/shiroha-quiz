@@ -241,7 +241,7 @@ private fun QuestionResultCard(
         }
         Spacer(Modifier.height(10.dp))
         Text(
-            text = question.question,
+            text = QuizRepository.displayQuestionText(question),
             style = MaterialTheme.typography.titleMedium,
             fontWeight = FontWeight.SemiBold
         )

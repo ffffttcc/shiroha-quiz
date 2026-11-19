@@ -440,7 +440,7 @@ private fun FavoriteQuestionPreview(entry: FavoriteQuestionEntry) {
 
 private fun favoriteQuestionDisplayTitle(entry: FavoriteQuestionEntry): String {
     val number = entry.question.number.trim()
-    val stem = entry.question.question.trim()
+    val stem = QuizRepository.displayQuestionText(entry.question).trim()
     val safeNumber = number.takeUnless(::isSuspiciousFavoriteQuestionNumber)
 
     return when {

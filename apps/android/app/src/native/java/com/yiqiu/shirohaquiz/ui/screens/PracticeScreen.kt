@@ -1199,7 +1199,7 @@ fun PracticeScreen(
                 }
             }
             Spacer(Modifier.height(12.dp))
-            val questionText = LatexDisplayFormatter.format(question.question)
+            val questionText = LatexDisplayFormatter.format(QuizRepository.displayQuestionText(question))
             val questionProgressText = if (isBatchPractice) {
                 "第 $batchGroupNumber 组，第 ${QuizRepository.practiceIndex - batchGroupStart + 1} / $batchGroupTotal 题"
             } else {
@@ -1778,7 +1778,7 @@ fun PracticeQuickEditScreen(
             return
         }
 
-        var questionText by remember(currentSessionKey) { mutableStateOf(question.question) }
+        var questionText by remember(currentSessionKey) { mutableStateOf(QuizRepository.displayQuestionText(question)) }
         var answerText by remember(currentSessionKey) {
             mutableStateOf(
                 question.answer.joinToString(if (question.type == QuestionType.SHORT) "\n\n" else " / ")
@@ -1946,7 +1946,7 @@ fun PracticeQuickEditScreen(
             Spacer(Modifier.height(10.dp))
             AiAnalysisFillPanel(
                 question = question.copy(
-                    question = questionText.trim(),
+                    question = QuizRepository.applyQuestionTextEdit(question, questionText.trim()).question,
                     options = if (isObjective) optionDrafts.map { it.copy(text = it.text.trim()) } else emptyList(),
                     answer = if (isStructuredBlank) MultiBlankSupport.compatibilityAnswer(blankAnswerDrafts) else parseQuickEditAnswer(answerText, question.type, optionDrafts),
                     blankAnswers = if (isStructuredBlank) blankAnswerDrafts else emptyList(),
@@ -1990,7 +1990,7 @@ fun PracticeQuickEditScreen(
                 enabled = questionText.isNotBlank(),
                 onClick = {
                     val updatedQuestion = question.copy(
-                        question = questionText.trim(),
+                        question = QuizRepository.applyQuestionTextEdit(question, questionText.trim()).question,
                         options = if (isObjective) optionDrafts.map { it.copy(text = it.text.trim()) } else emptyList(),
                         answer = if (isStructuredBlank) MultiBlankSupport.compatibilityAnswer(blankAnswerDrafts) else parseQuickEditAnswer(answerText, question.type, optionDrafts),
                         blankAnswers = if (isStructuredBlank) blankAnswerDrafts else emptyList(),
@@ -3857,7 +3857,7 @@ private fun practiceDisplayOptions(
         (question.type == QuestionType.SINGLE || question.type == QuestionType.MULTIPLE) &&
         question.options.size > 1
     val orderedOptions = if (canShuffle) {
-        val seedSource = "$sessionKey|${question.number}|${question.question}"
+        val seedSource = question.id
         val seed = sessionSeed xor seedSource.hashCode().toLong()
         question.options.toMutableList().also { options ->
             java.util.Collections.shuffle(options, java.util.Random(seed))

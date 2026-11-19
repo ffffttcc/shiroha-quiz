@@ -13,7 +13,8 @@ enum class QuestionSearchMatchedField(val label: String) {
     Question("题干"),
     Options("选项"),
     Answer("答案"),
-    Analysis("解析")
+    Analysis("解析"),
+    Material("材料")
 }
 
 data class QuestionSearchResult(
@@ -22,7 +23,9 @@ data class QuestionSearchResult(
     val groupName: String,
     val questionIndex: Int,
     val question: Question,
-    val matchedFields: List<QuestionSearchMatchedField>
+    val matchedFields: List<QuestionSearchMatchedField>,
+    /** 材料原文（阅读/完形文章）；无材料为 null。 */
+    val materialText: String? = null
 ) {
     val key: String = "$bankId:${question.id}:$questionIndex"
 }
@@ -50,8 +53,9 @@ object QuestionSearchEngine {
 
         return targetBanks.flatMap { bank ->
             bank.questions.mapIndexedNotNull { index, question ->
+                val materialText = question.materialId?.let { id -> bank.materials[id] }
                 val fieldTexts = mapOf(
-                    QuestionSearchMatchedField.Question to question.question,
+                    QuestionSearchMatchedField.Question to QuizRepository.displayQuestionText(question),
                     QuestionSearchMatchedField.Options to question.options.joinToString(" ") { "${it.key} ${it.text}" },
                     QuestionSearchMatchedField.Answer to buildString {
                         append(question.answer.joinToString(" "))
@@ -60,7 +64,8 @@ object QuestionSearchEngine {
                             append(question.blankAnswers.flatten().joinToString(" "))
                         }
                     },
-                    QuestionSearchMatchedField.Analysis to question.analysis
+                    QuestionSearchMatchedField.Analysis to question.analysis,
+                    QuestionSearchMatchedField.Material to materialText.orEmpty()
                 )
                 val normalizedFields = fieldTexts.mapValues { (_, value) -> normalizeForSearch(value) }
                 val combinedText = normalizedFields.values.joinToString(" ")
@@ -77,7 +82,8 @@ object QuestionSearchEngine {
                     groupName = bank.groupName.ifBlank { DEFAULT_BANK_GROUP_NAME },
                     questionIndex = index + 1,
                     question = question,
-                    matchedFields = matchedFields
+                    matchedFields = matchedFields,
+                    materialText = materialText
                 )
             }
         }

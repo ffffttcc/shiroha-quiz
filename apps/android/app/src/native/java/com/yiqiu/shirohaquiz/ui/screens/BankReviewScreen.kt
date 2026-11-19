@@ -558,9 +558,9 @@ fun BankReviewScreen(
                 }
                 Spacer(Modifier.height(12.dp))
                 OutlinedTextField(
-                    value = question.question,
+                    value = QuizRepository.editableQuestionText(question),
                     onValueChange = { value ->
-                        editableQuestions[safeIndex] = question.copy(question = value)
+                        editableQuestions[safeIndex] = QuizRepository.applyQuestionTextEdit(question, value)
                     },
                     modifier = Modifier
                         .fillMaxWidth()
@@ -710,7 +710,7 @@ fun BankReviewScreen(
                     fontWeight = FontWeight.SemiBold
                 )
                 Spacer(Modifier.height(12.dp))
-                val detectedBlankCount = MultiBlankSupport.countExplicitBlanks(question.question)
+                val detectedBlankCount = MultiBlankSupport.countExplicitBlanks(QuizRepository.displayQuestionText(question))
                 if (question.type == QuestionType.CLOZE) {
                     ClozeAnswerEditor(question = question, onChange = { editableQuestions[safeIndex] = it })
                 } else if (question.type == QuestionType.BLANK && question.blankAnswers.isNotEmpty()) {
@@ -759,7 +759,7 @@ fun BankReviewScreen(
                             onClick = {
                                 editableQuestions[safeIndex] = MultiBlankSupport.withBlankAnswers(
                                     question,
-                                    MultiBlankSupport.initialGroups(question.question, question.answer)
+                                    MultiBlankSupport.initialGroups(QuizRepository.displayQuestionText(question), question.answer)
                                 )
                             }
                         )
@@ -877,7 +877,7 @@ private fun bankQuestionMatchesFilter(question: Question, filter: BankReviewFilt
 private fun bankQuestionMatchesQuery(question: Question, query: String): Boolean {
     if (query.isBlank()) return true
     val normalized = query.lowercase()
-    return question.question.lowercase().contains(normalized) ||
+    return QuizRepository.displayQuestionText(question).lowercase().contains(normalized) ||
         question.number.lowercase().contains(normalized) ||
         question.category.lowercase().contains(normalized) ||
         question.answer.joinToString(" ").lowercase().contains(normalized) ||
@@ -889,7 +889,7 @@ private fun bankQuestionMatchesQuery(question: Question, query: String): Boolean
 
 private fun bankReviewTips(question: Question): List<String> {
     val tips = mutableListOf<String>()
-    if (question.question.isBlank()) tips += "题干为空。"
+    if (QuizRepository.displayQuestionText(question).isBlank()) tips += "题干为空。"
     if (question.answer.isEmpty()) tips += "未识别到答案。"
     if (question.type in listOf(QuestionType.SINGLE, QuestionType.MULTIPLE) && question.options.size < 2) {
         tips += "选择题选项数量偏少。"
@@ -899,7 +899,7 @@ private fun bankReviewTips(question: Question): List<String> {
 }
 
 private fun bankHasHardReviewError(question: Question): Boolean {
-    return question.question.isBlank() ||
+    return QuizRepository.displayQuestionText(question).isBlank() ||
         (question.type in listOf(QuestionType.SINGLE, QuestionType.MULTIPLE) && question.options.isEmpty())
 }
 
@@ -949,7 +949,7 @@ private fun ReviewFilteredJumpList(
                     )
                     Spacer(Modifier.height(4.dp))
                     Text(
-                        text = question.question.ifBlank { "题干为空" }.take(70),
+                        text = QuizRepository.displayQuestionText(question).ifBlank { "题干为空" }.take(70),
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
