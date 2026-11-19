@@ -648,12 +648,19 @@ object QuizRepository {
                 migratedFavoriteQuestions != restoredFavoriteQuestions ||
                 migratedStudyRecords != restoredStudyRecords
             )
-        if (sanitizedRestoredBanks != restoredBanks || questionIdIntegrityChanged) persist()
+        if (sanitizedRestoredBanks != restoredBanks || questionIdIntegrityChanged) {
+            markAllContentDirty()
+            persist()
+        }
         if (needsQuestionIdIntegrityMigration) {
             prefs.edit()
                 .putInt(KEY_QUESTION_ID_INTEGRITY_MIGRATION_VERSION, QUESTION_ID_INTEGRITY_MIGRATION_VERSION)
                 .apply()
         }
+        // Loading runs the sanitizers unconditionally, so in-memory content can differ from disk even
+        // when no persist() ran above. Keep the previous "first persist after init rewrites content"
+        // behaviour: mark everything now, let the next persist() flush it.
+        markAllContentDirty()
     }
 
     fun importBank(
@@ -678,6 +685,7 @@ object QuizRepository {
         )
         banks += bank
         activeBankId = bank.id
+        markContentDirty(KEY_BANKS, KEY_ACTIVE_BANK_ID)
         practiceScopeType = PRACTICE_SCOPE_BANK
         practiceScopeValue = bank.id
         resetPracticeState()
@@ -699,6 +707,7 @@ object QuizRepository {
             )
         ).questions
         banks[bankIndex] = bank.copy(questions = appendedQuestions)
+        markContentDirty(KEY_BANKS)
         if (activeBankId == bankId) {
             resetPracticeState()
             resetExam()
@@ -713,6 +722,7 @@ object QuizRepository {
         activeBankId = bankId
         practiceScopeType = PRACTICE_SCOPE_BANK
         practiceScopeValue = bankId
+        markContentDirty(KEY_ACTIVE_BANK_ID)
         // The current practice session is a snapshot. Switching the default bank/scope
         // only affects the next session and must not discard an unfinished practice.
         resetExam()
@@ -761,6 +771,7 @@ object QuizRepository {
         if (removingActive || banks.none { it.id == activeBankId }) {
             activeBankId = banks.firstOrNull()?.id
         }
+        markAllContentDirty()
         clampGroupSequentialProgress(removedGroupName)
         ensureValidPracticeScope()
         resetPracticeState()
@@ -819,6 +830,10 @@ object QuizRepository {
         if (practiceScopeType == PRACTICE_SCOPE_GROUP && practiceScopeValue == oldGroupName && banks.none { normalizeBankGroupName(it.groupName) == oldGroupName }) {
             fallbackPracticeScopeToActiveBank()
         }
+        markContentDirty(
+            KEY_BANKS, KEY_WRONG_BOOK, KEY_FAVORITE_QUESTIONS, KEY_STUDY_RECORDS,
+            KEY_PRACTICE_SEQUENTIAL_PROGRESS, KEY_PRACTICE_RECITE_SEQUENTIAL_PROGRESS
+        )
         persist()
         return true
     }
@@ -834,6 +849,7 @@ object QuizRepository {
         val cleanQuestion = sanitizeQuestion(updatedQuestion)
         val updatedQuestions = bank.questions.toMutableList().also { it[questionIndex] = cleanQuestion }
         banks[bankIndex] = bank.copy(questions = updatedQuestions)
+        markContentDirty(KEY_BANKS, KEY_WRONG_BOOK)
 
         for (i in wrongBook.indices) {
             val entry = wrongBook[i]
@@ -861,6 +877,10 @@ object QuizRepository {
         val bank = banks[bankIndex]
         val cleanQuestions = sanitizeBank(bank.copy(questions = questions)).questions
         banks[bankIndex] = bank.copy(questions = cleanQuestions)
+        markContentDirty(
+            KEY_BANKS, KEY_WRONG_BOOK, KEY_FAVORITE_QUESTIONS, KEY_SLASHED_QUESTIONS,
+            KEY_PRACTICE_SEQUENTIAL_PROGRESS, KEY_PRACTICE_RECITE_SEQUENTIAL_PROGRESS
+        )
 
         val questionById = cleanQuestions.associateBy { it.id }
         for (i in wrongBook.indices.reversed()) {
@@ -1122,6 +1142,7 @@ object QuizRepository {
         val key = if (bankId.isNotBlank()) "BANK:$bankId" else currentPracticeScopeKey()
         val progress = if (reciteMode) practiceReciteSequentialProgress else practiceSequentialProgress
         progress[key] = 0
+        markContentDirty(KEY_PRACTICE_SEQUENTIAL_PROGRESS, KEY_PRACTICE_RECITE_SEQUENTIAL_PROGRESS)
         persist()
     }
 
@@ -1368,6 +1389,7 @@ object QuizRepository {
         val updatedQuestions = banks[bankIndex].questions.toMutableList()
         updatedQuestions[questionIndex] = sanitizedUpdated
         banks[bankIndex] = banks[bankIndex].copy(questions = updatedQuestions)
+        markContentDirty(KEY_BANKS, KEY_WRONG_BOOK, KEY_FAVORITE_QUESTIONS)
 
         val currentIndex = practiceIndex.coerceIn(0, practiceQuestions.lastIndex)
         practiceQuestions = practiceQuestions.toMutableList().also { it[currentIndex] = sanitizedUpdated }
@@ -1416,6 +1438,7 @@ object QuizRepository {
         val updatedQuestions = banks[bankIndex].questions.toMutableList()
         updatedQuestions[questionIndex] = updatedQuestion
         banks[bankIndex] = banks[bankIndex].copy(questions = updatedQuestions)
+        markContentDirty(KEY_BANKS, KEY_WRONG_BOOK, KEY_FAVORITE_QUESTIONS)
 
         practiceQuestions = practiceQuestions.mapIndexed { index, practiceQuestion ->
             val sessionKey = practiceSessionKeyAt(index).orEmpty()
@@ -1505,6 +1528,7 @@ object QuizRepository {
         val index = bank.questions.indexOfFirst { it.id == entry.question.id }
         if (index >= 0) {
             activeBankId = bank.id
+            markContentDirty(KEY_ACTIVE_BANK_ID)
             practiceQuestions = listOf(bank.questions[index])
             practiceSourceLabel = "错题本"
             practiceIndex = 0
@@ -1528,6 +1552,7 @@ object QuizRepository {
 
     fun removeWrongQuestion(entry: WrongQuestionEntry) {
         wrongBook.removeAll { it.bankId == entry.bankId && it.question.id == entry.question.id }
+        markContentDirty(KEY_WRONG_BOOK)
         persist()
     }
 
@@ -1536,6 +1561,7 @@ object QuizRepository {
         if (index < 0) return
         val now = System.currentTimeMillis()
         val current = wrongBook[index]
+        markContentDirty(KEY_WRONG_BOOK)
         wrongBook[index] = if (mastered) {
             val nextReviewLevel = current.reviewLevel.coerceAtLeast(2)
             current.copy(
@@ -1599,6 +1625,7 @@ object QuizRepository {
 
     fun clearWrongBook() {
         wrongBook.clear()
+        markContentDirty(KEY_WRONG_BOOK)
         persist()
     }
 
@@ -1635,6 +1662,7 @@ object QuizRepository {
         val now = System.currentTimeMillis()
         if (slashedQuestions.none { it.bankId == bank.id && it.questionKey == key }) {
             slashedQuestions.add(0, SlashedQuestionEntry(bank.id, key, now))
+            markContentDirty(KEY_SLASHED_QUESTIONS)
         }
 
         val currentIndex = practiceIndex
@@ -1670,7 +1698,10 @@ object QuizRepository {
         appContext = context.applicationContext
         val key = questionKey(question)
         val removed = slashedQuestions.removeAll { it.bankId == bankId && it.questionKey == key }
-        if (removed) persist()
+        if (removed) {
+            markContentDirty(KEY_SLASHED_QUESTIONS)
+            persist()
+        }
         return removed
     }
 
@@ -1702,12 +1733,14 @@ object QuizRepository {
                 )
             )
         }
+        markContentDirty(KEY_FAVORITE_QUESTIONS)
         persist()
         return true
     }
 
     fun removeFavoriteQuestion(entry: FavoriteQuestionEntry) {
         favoriteQuestions.removeAll { it.bankId == entry.bankId && it.question.id == entry.question.id }
+        markContentDirty(KEY_FAVORITE_QUESTIONS)
         persist()
     }
 
@@ -2643,6 +2676,7 @@ object QuizRepository {
                 sourceBankName = sourceBank?.name ?: examQuestionBankNames[question.id]
             )
         }
+        markContentDirty(KEY_STUDY_RECORDS)
         studyRecords.add(
             0,
             StudyRecord(
@@ -2936,6 +2970,7 @@ object QuizRepository {
     }
 
     private fun publishBackupContent(content: BackupContent) {
+        markAllContentDirty()
         banks.clear()
         banks.addAll(content.banks)
         wrongBook.clear()
@@ -4187,6 +4222,7 @@ object QuizRepository {
             }
             resetPracticeState()
             resetExam()
+            markAllContentDirty()
             persist()
             return if (importedStateCount > 0) {
                 "已导入 ${addedBanks.size} 个题库；已同步错题本、收藏夹和记录。"
@@ -4286,6 +4322,7 @@ object QuizRepository {
 
         resetPracticeState()
         resetExam()
+        markAllContentDirty()
         persist()
         return "已导入 ${addedBanks.size} 个题库" +
             if (mappedWrongBook.isNotEmpty() || mappedSlashedQuestions.isNotEmpty() || mappedFavorites.isNotEmpty() || mappedRecords.isNotEmpty()) {
@@ -4475,7 +4512,10 @@ object QuizRepository {
     fun deleteStudyRecord(recordId: String): Boolean {
         if (recordId.isBlank()) return false
         val removed = studyRecords.removeAll { record -> record.id == recordId }
-        if (removed) persist()
+        if (removed) {
+            markContentDirty(KEY_STUDY_RECORDS)
+            persist()
+        }
         return removed
     }
 
@@ -4492,6 +4532,7 @@ object QuizRepository {
         activeBankId = null
         resetPracticeState()
         resetExam()
+        markAllContentDirty()
         persist()
     }
 
@@ -4505,6 +4546,7 @@ object QuizRepository {
         studyRecords.clear()
         resetRememberedWrongBookState()
         activeBankId = null
+        markAllContentDirty()
         resetPracticeState()
         initialized = false
         appContext = null
@@ -4520,6 +4562,7 @@ object QuizRepository {
         if (practiceSequentialUsesReciteProgress) {
             val currentIndex = practiceIndex.coerceIn(0, practiceQuestions.lastIndex)
             practiceReciteSequentialProgress[bankId] = (startIndex + currentIndex).coerceAtLeast(0)
+            markContentDirty(KEY_PRACTICE_RECITE_SEQUENTIAL_PROGRESS)
             return true
         }
 
@@ -4546,6 +4589,7 @@ object QuizRepository {
             startIndex + targetInCurrentSession
         }
         practiceSequentialProgress[bankId] = nextProgressIndex.coerceAtLeast(0)
+        markContentDirty(KEY_PRACTICE_SEQUENTIAL_PROGRESS)
         return true
     }
 
@@ -4588,6 +4632,7 @@ object QuizRepository {
                 scopeName = practiceSessionScopeName
             )
         )
+        markContentDirty(KEY_STUDY_RECORDS)
         if (advanceSequentialProgress) {
             advanceSequentialProgressAfterComplete()
         }
@@ -4599,6 +4644,7 @@ object QuizRepository {
         val nextIndex = practiceSequentialNextIndexAfterComplete ?: return
         val progress = if (practiceSequentialUsesReciteProgress) practiceReciteSequentialProgress else practiceSequentialProgress
         progress[bankId] = nextIndex.coerceAtLeast(0)
+        markContentDirty(KEY_PRACTICE_SEQUENTIAL_PROGRESS, KEY_PRACTICE_RECITE_SEQUENTIAL_PROGRESS)
     }
 
     private fun resetPracticeState() {
@@ -5140,6 +5186,7 @@ object QuizRepository {
     private val blankAnswerBoundaryPunctuation = setOf('.', ',', ';', ':', '!', '?', '。', '，', '；', '：', '！', '？', '、')
 
     private fun recordPracticeResult(bank: QuizBank?, question: Question, result: QuestionCheckResult) {
+        markContentDirty(KEY_STUDY_RECORDS)
         studyRecords.add(
             0,
             StudyRecord(
@@ -5164,6 +5211,7 @@ object QuizRepository {
         val bankId = bank?.id ?: return
         val bankName = bank.name
         val now = System.currentTimeMillis()
+        markContentDirty(KEY_WRONG_BOOK)
         val index = wrongBook.indexOfFirst { it.bankId == bankId && it.question.id == question.id }
         if (index >= 0) {
             val current = wrongBook[index]
@@ -5214,6 +5262,7 @@ object QuizRepository {
         if (index < 0) return
         val now = System.currentTimeMillis()
         val current = wrongBook[index]
+        markContentDirty(KEY_WRONG_BOOK)
         val nextRightCount = current.rightCount + 1
         val nextReviewRightCount = current.reviewRightCount + 1
         val nextStreakCorrectCount = current.streakCorrectCount + 1
@@ -5244,6 +5293,7 @@ object QuizRepository {
         val total = banks
             .filter { normalizeBankGroupName(it.groupName) == cleanGroup }
             .sumOf { bank -> bank.questions.count { question -> !isQuestionSlashed(bank.id, question) } }
+        markContentDirty(KEY_PRACTICE_SEQUENTIAL_PROGRESS, KEY_PRACTICE_RECITE_SEQUENTIAL_PROGRESS)
         if (total <= 0) {
             practiceSequentialProgress.remove(key)
             practiceReciteSequentialProgress.remove(key)
@@ -5552,20 +5602,33 @@ object QuizRepository {
         return if (this % 1.0 == 0.0) this.toInt().toString() else this.toString().trimEnd('0').trimEnd('.')
     }
 
+    /** Content keys whose in-memory value changed since the last persist(). */
+    private val dirtyContentKeys: MutableSet<String> =
+        java.util.Collections.synchronizedSet(mutableSetOf<String>())
+
+    private fun markContentDirty(vararg keys: String) {
+        dirtyContentKeys.addAll(keys)
+    }
+
+    private fun markAllContentDirty() {
+        markContentDirty(
+            KEY_BANKS,
+            KEY_ACTIVE_BANK_ID,
+            KEY_WRONG_BOOK,
+            KEY_SLASHED_QUESTIONS,
+            KEY_FAVORITE_QUESTIONS,
+            KEY_STUDY_RECORDS,
+            KEY_PRACTICE_SEQUENTIAL_PROGRESS,
+            KEY_PRACTICE_RECITE_SEQUENTIAL_PROGRESS
+        )
+    }
+
     private fun persist() {
         val context = appContext ?: return
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        prefs.edit()
-            .putString(KEY_BANKS, banksToJson(banks))
-            .putString(KEY_ACTIVE_BANK_ID, activeBankId)
+        val editor = prefs.edit()
             .putString(KEY_PRACTICE_SCOPE_TYPE, practiceScopeType)
             .putString(KEY_PRACTICE_SCOPE_VALUE, practiceScopeValue)
-            .putString(KEY_WRONG_BOOK, wrongBookToJson(wrongBook))
-            .putString(KEY_SLASHED_QUESTIONS, slashedQuestionsToJson(slashedQuestions))
-            .putString(KEY_FAVORITE_QUESTIONS, favoriteQuestionsToJson(favoriteQuestions))
-            .putString(KEY_STUDY_RECORDS, studyRecordsToJson(studyRecords))
-            .putString(KEY_PRACTICE_SEQUENTIAL_PROGRESS, sequentialProgressToJson(practiceSequentialProgress))
-            .putString(KEY_PRACTICE_RECITE_SEQUENTIAL_PROGRESS, sequentialProgressToJson(practiceReciteSequentialProgress))
             .putBoolean(KEY_PRACTICE_NEXT_REQUIRES_RESULT, practiceNextRequiresResult)
             .putBoolean(KEY_REMEMBER_PRACTICE_SETTINGS, rememberPracticeSettingsEnabled)
             .putBoolean(KEY_SWIPE_NAVIGATION_ENABLED, swipeNavigationEnabled)
@@ -5627,9 +5690,20 @@ object QuizRepository {
             .putInt(KEY_AI_MAX_QUESTIONS, aiMaxQuestions)
             .putInt(KEY_AI_TIMEOUT_SECONDS, aiTimeoutSeconds)
             .putInt(KEY_AI_REFACTOR_MAX_CHARS, aiRefactorMaxChars)
-            .apply()
+        // Large JSON content keys are re-serialized only when their in-memory value actually changed.
+        // Settings above are cheap scalars and stay unconditional on purpose (43 setters would be a
+        // much larger missed-marker risk than the microseconds they cost).
+        if (dirtyContentKeys.contains(KEY_BANKS)) editor.putString(KEY_BANKS, banksToJson(banks))
+        if (dirtyContentKeys.contains(KEY_ACTIVE_BANK_ID)) editor.putString(KEY_ACTIVE_BANK_ID, activeBankId)
+        if (dirtyContentKeys.contains(KEY_WRONG_BOOK)) editor.putString(KEY_WRONG_BOOK, wrongBookToJson(wrongBook))
+        if (dirtyContentKeys.contains(KEY_SLASHED_QUESTIONS)) editor.putString(KEY_SLASHED_QUESTIONS, slashedQuestionsToJson(slashedQuestions))
+        if (dirtyContentKeys.contains(KEY_FAVORITE_QUESTIONS)) editor.putString(KEY_FAVORITE_QUESTIONS, favoriteQuestionsToJson(favoriteQuestions))
+        if (dirtyContentKeys.contains(KEY_STUDY_RECORDS)) editor.putString(KEY_STUDY_RECORDS, studyRecordsToJson(studyRecords))
+        if (dirtyContentKeys.contains(KEY_PRACTICE_SEQUENTIAL_PROGRESS)) editor.putString(KEY_PRACTICE_SEQUENTIAL_PROGRESS, sequentialProgressToJson(practiceSequentialProgress))
+        if (dirtyContentKeys.contains(KEY_PRACTICE_RECITE_SEQUENTIAL_PROGRESS)) editor.putString(KEY_PRACTICE_RECITE_SEQUENTIAL_PROGRESS, sequentialProgressToJson(practiceReciteSequentialProgress))
+        editor.apply()
+        dirtyContentKeys.clear()
     }
-
     private fun banksToJson(banks: List<QuizBank>, assetMapping: MutableMap<String, BackupAsset>? = null): String {
         val bankArray = JSONArray()
         banks.forEach { bank ->
