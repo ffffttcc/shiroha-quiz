@@ -1,6 +1,7 @@
 package com.yiqiu.shirohaquiz.state
 
 import android.content.Context
+import android.content.SharedPreferences
 import android.graphics.BitmapFactory
 import android.util.Base64
 import androidx.compose.runtime.getValue
@@ -181,6 +182,12 @@ object QuizRepository {
     private const val PREFS_NAME = "shiroha_quiz_native"
     private const val KEY_BANKS = "banks"
     private const val KEY_ACTIVE_BANK_ID = "active_bank_id"
+    private const val KEY_BANK_INDEX = "bank_index"
+    private const val KEY_BANK_STORAGE_VERSION = "bank_storage_version"
+    private const val BANK_STORAGE_VERSION = 1
+    private const val BANK_STORAGE_DIR_NAME = "banks"
+    private const val BANK_STORAGE_STAGING_DIR_NAME = ".staging"
+    private const val BANK_STORAGE_LEGACY_FILE_NAME = "_legacy_banks.json"
     private const val KEY_PRACTICE_SCOPE_TYPE = "practice_scope_type"
     private const val KEY_PRACTICE_SCOPE_VALUE = "practice_scope_value"
     private const val KEY_WRONG_BOOK = "wrong_book"
@@ -456,8 +463,8 @@ object QuizRepository {
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         val needsQuestionIdIntegrityMigration =
             prefs.getInt(KEY_QUESTION_ID_INTEGRITY_MIGRATION_VERSION, 0) < QUESTION_ID_INTEGRITY_MIGRATION_VERSION
-        val banksJson = prefs.getString(KEY_BANKS, null)
-        val restoredBanks = runCatching { parseBanksJson(banksJson) }.getOrDefault(emptyList())
+        migrateBankStorageIfNeeded(context, prefs)
+        val restoredBanks = runCatching { readStoredBanks(context, prefs) }.getOrDefault(emptyList())
         val restoredWrongBook = runCatching {
             parseWrongBookJson(prefs.getString(KEY_WRONG_BOOK, null))
         }.getOrDefault(emptyList())
@@ -686,6 +693,7 @@ object QuizRepository {
         banks += bank
         activeBankId = bank.id
         markContentDirty(KEY_BANKS, KEY_ACTIVE_BANK_ID)
+        markBankDirty(bank.id)
         practiceScopeType = PRACTICE_SCOPE_BANK
         practiceScopeValue = bank.id
         resetPracticeState()
@@ -708,6 +716,7 @@ object QuizRepository {
         ).questions
         banks[bankIndex] = bank.copy(questions = appendedQuestions)
         markContentDirty(KEY_BANKS)
+        markBankDirty(bankId)
         if (activeBankId == bankId) {
             resetPracticeState()
             resetExam()
@@ -772,6 +781,7 @@ object QuizRepository {
             activeBankId = banks.firstOrNull()?.id
         }
         markAllContentDirty()
+        runCatching { bankStorageFile(context, bankId).delete() }
         clampGroupSequentialProgress(removedGroupName)
         ensureValidPracticeScope()
         resetPracticeState()
@@ -830,6 +840,7 @@ object QuizRepository {
         if (practiceScopeType == PRACTICE_SCOPE_GROUP && practiceScopeValue == oldGroupName && banks.none { normalizeBankGroupName(it.groupName) == oldGroupName }) {
             fallbackPracticeScopeToActiveBank()
         }
+        markBankDirty(bankId)
         markContentDirty(
             KEY_BANKS, KEY_WRONG_BOOK, KEY_FAVORITE_QUESTIONS, KEY_STUDY_RECORDS,
             KEY_PRACTICE_SEQUENTIAL_PROGRESS, KEY_PRACTICE_RECITE_SEQUENTIAL_PROGRESS
@@ -850,6 +861,7 @@ object QuizRepository {
         val updatedQuestions = bank.questions.toMutableList().also { it[questionIndex] = cleanQuestion }
         banks[bankIndex] = bank.copy(questions = updatedQuestions)
         markContentDirty(KEY_BANKS, KEY_WRONG_BOOK)
+        markBankDirty(bankId)
 
         for (i in wrongBook.indices) {
             val entry = wrongBook[i]
@@ -877,6 +889,7 @@ object QuizRepository {
         val bank = banks[bankIndex]
         val cleanQuestions = sanitizeBank(bank.copy(questions = questions)).questions
         banks[bankIndex] = bank.copy(questions = cleanQuestions)
+        markBankDirty(bankId)
         markContentDirty(
             KEY_BANKS, KEY_WRONG_BOOK, KEY_FAVORITE_QUESTIONS, KEY_SLASHED_QUESTIONS,
             KEY_PRACTICE_SEQUENTIAL_PROGRESS, KEY_PRACTICE_RECITE_SEQUENTIAL_PROGRESS
@@ -1355,13 +1368,16 @@ object QuizRepository {
                 favoriteQuestions[index] = entry.copy(question = updated)
             }
         }
-        // Ink edits are debounced by the controller; do not block the UI thread on disk I/O.
+        // Ink edits are debounced by the controller; only this bank's file is rewritten (no 9 MB blob).
         return runCatching {
             val context = appContext ?: return false
+            markBankDirty(bankId)
+            flushDirtyBankFiles(context)
             context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
-                .putString(KEY_BANKS, banksToJson(banks))
                 .putString(KEY_WRONG_BOOK, wrongBookToJson(wrongBook))
                 .putString(KEY_FAVORITE_QUESTIONS, favoriteQuestionsToJson(favoriteQuestions))
+                .putString(KEY_BANK_INDEX, bankIndexJson(banks))
+                .putInt(KEY_BANK_STORAGE_VERSION, BANK_STORAGE_VERSION)
                 .apply()
             true
         }.getOrDefault(false)
@@ -1389,6 +1405,7 @@ object QuizRepository {
         val updatedQuestions = banks[bankIndex].questions.toMutableList()
         updatedQuestions[questionIndex] = sanitizedUpdated
         banks[bankIndex] = banks[bankIndex].copy(questions = updatedQuestions)
+        markBankDirty(targetBank.id)
         markContentDirty(KEY_BANKS, KEY_WRONG_BOOK, KEY_FAVORITE_QUESTIONS)
 
         val currentIndex = practiceIndex.coerceIn(0, practiceQuestions.lastIndex)
@@ -1438,6 +1455,7 @@ object QuizRepository {
         val updatedQuestions = banks[bankIndex].questions.toMutableList()
         updatedQuestions[questionIndex] = updatedQuestion
         banks[bankIndex] = banks[bankIndex].copy(questions = updatedQuestions)
+        markBankDirty(targetBank.id)
         markContentDirty(KEY_BANKS, KEY_WRONG_BOOK, KEY_FAVORITE_QUESTIONS)
 
         practiceQuestions = practiceQuestions.mapIndexed { index, practiceQuestion ->
@@ -2884,6 +2902,7 @@ object QuizRepository {
                 publishBackupContent(replacement)
                 resetPracticeState()
                 resetExam()
+                commitBankStorage(context, replacement.banks)
                 check(pending.delete()) { "无法完成恢复事务日志" }
             }
             return "已覆盖恢复 ${replacement.banks.size} 个题库、${replacement.wrong.size} 条错题、" +
@@ -4532,6 +4551,7 @@ object QuizRepository {
         activeBankId = null
         resetPracticeState()
         resetExam()
+        runCatching { clearBankStorageFiles(context) }
         markAllContentDirty()
         persist()
     }
@@ -4547,6 +4567,8 @@ object QuizRepository {
         resetRememberedWrongBookState()
         activeBankId = null
         markAllContentDirty()
+        dirtyContentKeys.clear()
+        dirtyBankIds.clear()
         resetPracticeState()
         initialized = false
         appContext = null
@@ -5613,6 +5635,14 @@ object QuizRepository {
     private val dirtyContentKeys: MutableSet<String> =
         java.util.Collections.synchronizedSet(mutableSetOf<String>())
 
+    /** 题库正文按库脏标记：persist() 只重写这些库的文件。 */
+    private val dirtyBankIds: MutableSet<String> =
+        java.util.Collections.synchronizedSet(mutableSetOf<String>())
+
+    private fun markBankDirty(vararg bankIds: String) {
+        bankIds.filter { it.isNotBlank() }.forEach { dirtyBankIds.add(it) }
+    }
+
     private fun markContentDirty(vararg keys: String) {
         dirtyContentKeys.addAll(keys)
     }
@@ -5628,6 +5658,7 @@ object QuizRepository {
             KEY_PRACTICE_SEQUENTIAL_PROGRESS,
             KEY_PRACTICE_RECITE_SEQUENTIAL_PROGRESS
         )
+        markBankDirty(*banks.map { it.id }.toTypedArray())
     }
 
     private fun persist() {
@@ -5700,7 +5731,14 @@ object QuizRepository {
         // Large JSON content keys are re-serialized only when their in-memory value actually changed.
         // Settings above are cheap scalars and stay unconditional on purpose (43 setters would be a
         // much larger missed-marker risk than the microseconds they cost).
-        if (dirtyContentKeys.contains(KEY_BANKS)) editor.putString(KEY_BANKS, banksToJson(banks))
+        val banksDirty = dirtyContentKeys.contains(KEY_BANKS)
+        val banksFlushed = !banksDirty || runCatching { flushDirtyBankFiles(context) }.isSuccess
+        if (banksDirty && banksFlushed) {
+            // 题库正文写分文件存储；prefs 只留 KB 级索引（迁移/新鲜安装后 KEY_BANKS 一律清空）。
+            editor.putString(KEY_BANK_INDEX, bankIndexJson(banks))
+            editor.putInt(KEY_BANK_STORAGE_VERSION, BANK_STORAGE_VERSION)
+            editor.putString(KEY_BANKS, "")
+        }
         if (dirtyContentKeys.contains(KEY_ACTIVE_BANK_ID)) editor.putString(KEY_ACTIVE_BANK_ID, activeBankId)
         if (dirtyContentKeys.contains(KEY_WRONG_BOOK)) editor.putString(KEY_WRONG_BOOK, wrongBookToJson(wrongBook))
         if (dirtyContentKeys.contains(KEY_SLASHED_QUESTIONS)) editor.putString(KEY_SLASHED_QUESTIONS, slashedQuestionsToJson(slashedQuestions))
@@ -5710,7 +5748,140 @@ object QuizRepository {
         if (dirtyContentKeys.contains(KEY_PRACTICE_RECITE_SEQUENTIAL_PROGRESS)) editor.putString(KEY_PRACTICE_RECITE_SEQUENTIAL_PROGRESS, sequentialProgressToJson(practiceReciteSequentialProgress))
         editor.apply()
         dirtyContentKeys.clear()
+        if (banksDirty && !banksFlushed) dirtyContentKeys.add(KEY_BANKS)
     }
+    // ---- 题库分文件存储（见 docs/存储根治-设计.md）----
+
+    private fun bankStorageDir(context: Context): File = File(context.filesDir, BANK_STORAGE_DIR_NAME)
+
+    private fun bankStorageSafeId(bankId: String): String {
+        val safe = bankId.trim().map { ch ->
+            if (ch.isLetterOrDigit() || ch == '-' || ch == '_') ch else '_'
+        }.joinToString("")
+        return safe.ifBlank { "anonymous" }
+    }
+
+    private fun bankStorageFile(context: Context, bankId: String): File =
+        File(bankStorageDir(context), bankStorageSafeId(bankId) + ".json")
+
+    private fun bankStorageLegacyFile(context: Context): File =
+        File(bankStorageDir(context), BANK_STORAGE_LEGACY_FILE_NAME)
+
+    private fun bankIndexJson(banks: List<QuizBank>): String {
+        val array = JSONArray()
+        banks.forEach { bank ->
+            array.put(
+                JSONObject()
+                    .put("id", bank.id)
+                    .put("name", bank.name)
+                    .put("groupName", normalizeBankGroupName(bank.groupName))
+                    .put("questionCount", bank.questions.size)
+                    .put("file", bankStorageSafeId(bank.id) + ".json")
+                    .put("version", System.currentTimeMillis())
+            )
+        }
+        return array.toString()
+    }
+
+    private fun writeBankStorageFile(context: Context, bank: QuizBank) {
+        val dir = bankStorageDir(context)
+        check(dir.isDirectory || dir.mkdirs()) { "无法创建题库目录" }
+        val target = bankStorageFile(context, bank.id)
+        val temp = File(dir, target.name + ".tmp")
+        temp.writeText(banksToJson(listOf(bank)), Charsets.UTF_8)
+        if (target.exists() && !target.delete()) error("无法替换题库文件")
+        if (!temp.renameTo(target)) error("无法提交题库文件")
+    }
+
+    private fun flushDirtyBankFiles(context: Context) {
+        val targets = if (dirtyBankIds.isEmpty()) banks.toList() else banks.filter { dirtyBankIds.contains(it.id) }
+        targets.forEach { bank -> writeBankStorageFile(context, bank) }
+        dirtyBankIds.clear()
+    }
+
+    private fun readBankStorageFiles(context: Context): List<QuizBank> {
+        val dir = bankStorageDir(context)
+        if (!dir.isDirectory) return emptyList()
+        val files = dir.listFiles()
+            ?.filter { it.isFile && it.extension == "json" && it.name != BANK_STORAGE_LEGACY_FILE_NAME }
+            ?: return emptyList()
+        val restored = ArrayList<QuizBank>(files.size)
+        files.sortedBy { it.name }.forEach { file ->
+            runCatching { parseBanksJson(file.readText(Charsets.UTF_8)) }
+                .getOrDefault(emptyList())
+                .let(restored::addAll)
+        }
+        return restored
+    }
+
+    private fun readStoredBanks(context: Context, prefs: SharedPreferences): List<QuizBank> {
+        if (prefs.getInt(KEY_BANK_STORAGE_VERSION, 0) >= BANK_STORAGE_VERSION) return readBankStorageFiles(context)
+        return parseBanksJson(prefs.getString(KEY_BANKS, null))
+    }
+
+    private fun clearBankStorageFiles(context: Context) {
+        val dir = bankStorageDir(context)
+        dir.listFiles()?.forEach { file ->
+            if (file.isFile && file.name != BANK_STORAGE_LEGACY_FILE_NAME) file.delete()
+        }
+    }
+
+    /** 恢复事务提交：题库正文落文件 + 索引 + 清掉旧的整体 JSON（失败由上层回滚 prefs）。 */
+    private fun commitBankStorage(context: Context, content: List<QuizBank>) {
+        val dir = bankStorageDir(context)
+        check(dir.isDirectory || dir.mkdirs()) { "无法创建题库目录" }
+        val staging = File(dir, BANK_STORAGE_STAGING_DIR_NAME)
+        staging.deleteRecursively()
+        check(staging.mkdirs()) { "无法创建暂存目录" }
+        content.forEach { bank ->
+            File(staging, bankStorageSafeId(bank.id) + ".json")
+                .writeText(banksToJson(listOf(bank)), Charsets.UTF_8)
+        }
+        clearBankStorageFiles(context)
+        staging.listFiles()?.forEach { file ->
+            if (!file.renameTo(File(dir, file.name))) error("无法提交题库文件")
+        }
+        check(
+            context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
+                .putString(KEY_BANK_INDEX, bankIndexJson(content))
+                .putInt(KEY_BANK_STORAGE_VERSION, BANK_STORAGE_VERSION)
+                .putString(KEY_BANKS, "")
+                .commit()
+        ) { "无法写入题库索引" }
+    }
+
+    /** 把旧 KEY_BANKS 拆成每库一个文件 + 索引。任一步失败：不写版本号、不清旧值，下次启动可重试。 */
+    private fun migrateBankStorageIfNeeded(context: Context, prefs: SharedPreferences) {
+        if (prefs.getInt(KEY_BANK_STORAGE_VERSION, 0) >= BANK_STORAGE_VERSION) return
+        val legacy = prefs.getString(KEY_BANKS, null)
+        if (legacy.isNullOrBlank()) return
+        val dir = bankStorageDir(context)
+        val staging = File(dir, BANK_STORAGE_STAGING_DIR_NAME)
+        try {
+            check(dir.isDirectory || dir.mkdirs()) { "无法创建题库目录" }
+            staging.deleteRecursively()
+            check(staging.mkdirs()) { "无法创建暂存目录" }
+            val parsed = parseBanksJson(legacy)
+            parsed.forEach { bank ->
+                File(staging, bankStorageSafeId(bank.id) + ".json")
+                    .writeText(banksToJson(listOf(bank)), Charsets.UTF_8)
+            }
+            staging.listFiles()?.forEach { file ->
+                if (!file.renameTo(File(dir, file.name))) error("无法提交题库文件")
+            }
+            bankStorageLegacyFile(context).writeText(legacy, Charsets.UTF_8)
+            check(
+                prefs.edit()
+                    .putString(KEY_BANK_INDEX, bankIndexJson(parsed))
+                    .putInt(KEY_BANK_STORAGE_VERSION, BANK_STORAGE_VERSION)
+                    .putString(KEY_BANKS, "")
+                    .commit()
+            ) { "无法写入题库索引" }
+        } catch (_: Throwable) {
+            staging.deleteRecursively()
+        }
+    }
+
     private fun banksToJson(banks: List<QuizBank>, assetMapping: MutableMap<String, BackupAsset>? = null): String {
         val bankArray = JSONArray()
         banks.forEach { bank ->
