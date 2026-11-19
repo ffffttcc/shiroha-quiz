@@ -2,6 +2,8 @@ package com.yiqiu.shirohaquiz.ui.screens
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -11,8 +13,8 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.ChevronRight
@@ -169,76 +171,82 @@ fun BankListScreen(
         .entries
         .sortedBy { entry -> if (entry.key == DEFAULT_BANK_GROUP_NAME) "" else entry.key }
 
-    Column(
-        modifier = Modifier
-            .verticalScroll(rememberScrollState())
-            .padding(horizontal = ShirohaSpacing.Xl, vertical = ShirohaSpacing.Sm),
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(horizontal = ShirohaSpacing.Xl, vertical = ShirohaSpacing.Sm),
         verticalArrangement = Arrangement.spacedBy(ShirohaSpacing.Lg)
     ) {
-        ShirohaHeader(
-            kicker = "Banks",
-            title = "题库管理",
-            subtitle = ""
-        )
-
-        IllustrationHeroCard(
-            title = "整理题库",
-            subtitle = "管理题库和练习范围。",
-            imageRes = R.drawable.illus_bank_manage_hint_webp,
-            modifier = Modifier.height(ShirohaDimens.HeroCardHeight),
-            imageSize = ShirohaDimens.HeroImageSize
-        )
-
-        GlassCard(contentPadding = 16.dp) {
-            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                Text(
-                    text = "当前题库：${QuizRepository.currentPracticeScopeLabel()}",
-                    style = MaterialTheme.typography.bodyMedium,
-                    fontWeight = FontWeight.SemiBold
-                )
-                Text(
-                    text = "练习范围：${QuizRepository.currentPracticeScopeLabel()} · ${QuizRepository.currentPracticeScopeSummary()}",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-        }
-
-        GlassCard(
-            modifier = Modifier.shirohaNoRippleClickable(onClick = onOpenQuestionSearch),
-            contentPadding = 18.dp
-        ) {
-            Row(
+        item {
+            Column(
                 modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically
+                verticalArrangement = Arrangement.spacedBy(ShirohaSpacing.Lg)
             ) {
-                Icon(
-                    imageVector = Icons.Rounded.Search,
-                    contentDescription = "搜索题目",
-                    tint = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.size(28.dp)
+                ShirohaHeader(
+                    kicker = "Banks",
+                    title = "题库管理",
+                    subtitle = ""
                 )
-                Spacer(Modifier.width(12.dp))
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = "搜索题目",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.SemiBold
-                    )
-                    Text(
-                        text = "搜题干、选项、答案或解析",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
+
+                IllustrationHeroCard(
+                    title = "整理题库",
+                    subtitle = "管理题库和练习范围。",
+                    imageRes = R.drawable.illus_bank_manage_hint_webp,
+                    modifier = Modifier.height(ShirohaDimens.HeroCardHeight),
+                    imageSize = ShirohaDimens.HeroImageSize
+                )
+
+                GlassCard(contentPadding = 16.dp) {
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text(
+                            text = "当前题库：${QuizRepository.currentPracticeScopeLabel()}",
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        Text(
+                            text = "练习范围：${QuizRepository.currentPracticeScopeLabel()} · ${QuizRepository.currentPracticeScopeSummary()}",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
                 }
-                Icon(
-                    imageVector = Icons.Rounded.ChevronRight,
-                    contentDescription = "进入题目搜索",
-                    tint = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.size(22.dp)
-                )
+
+                GlassCard(
+                    modifier = Modifier.shirohaNoRippleClickable(onClick = onOpenQuestionSearch),
+                    contentPadding = 18.dp
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            imageVector = Icons.Rounded.Search,
+                            contentDescription = "搜索题目",
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(28.dp)
+                        )
+                        Spacer(Modifier.width(12.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "搜索题目",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                            Text(
+                                text = "搜题干、选项、答案或解析",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                        Icon(
+                            imageVector = Icons.Rounded.ChevronRight,
+                            contentDescription = "进入题目搜索",
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(22.dp)
+                        )
+                    }
+                }
             }
         }
 
@@ -248,97 +256,99 @@ fun BankListScreen(
             val isExpanded = groupName !in collapsedGroups
             val totalQuestions = banksInGroup.sumOf { QuizRepository.bankQuestionCount(it.id) }
 
-            GlassCard {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
+            item(key = "g:$groupName") {
+                GlassCard {
                     Row(
-                        modifier = Modifier
-                            .weight(1f)
-                            .shirohaNoRippleClickable {
-                                collapsedGroups = if (isExpanded) {
-                                    (collapsedGroups + groupName).distinct()
-                                } else {
-                                    collapsedGroups - groupName
-                                }
-                            },
+                        modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Icon(
-                            imageVector = if (isExpanded) Icons.Rounded.ExpandMore else Icons.Rounded.ChevronRight,
-                            contentDescription = if (isExpanded) "收起分组" else "展开分组",
-                            tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(24.dp)
-                        )
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = groupName,
-                                style = MaterialTheme.typography.titleLarge,
-                                fontWeight = FontWeight.SemiBold,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
+                        Row(
+                            modifier = Modifier
+                                .weight(1f)
+                                .shirohaNoRippleClickable {
+                                    collapsedGroups = if (isExpanded) {
+                                        (collapsedGroups + groupName).distinct()
+                                    } else {
+                                        collapsedGroups - groupName
+                                    }
+                                },
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                imageVector = if (isExpanded) Icons.Rounded.ExpandMore else Icons.Rounded.ChevronRight,
+                                contentDescription = if (isExpanded) "收起分组" else "展开分组",
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(24.dp)
                             )
-                            Text(
-                                text = "${banksInGroup.size} 个题库 · $totalQuestions 题",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = groupName,
+                                    style = MaterialTheme.typography.titleLarge,
+                                    fontWeight = FontWeight.SemiBold,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                Text(
+                                    text = "${banksInGroup.size} 个题库 · $totalQuestions 题",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
                         }
+                        CompactBankStateChip(
+                            text = if (practiceScopeType == QuizRepository.PRACTICE_SCOPE_GROUP && practiceScopeValue == groupName) "当前练习范围" else "设为练习范围",
+                            selected = practiceScopeType == QuizRepository.PRACTICE_SCOPE_GROUP && practiceScopeValue == groupName,
+                            onClick = {
+                                if (!(practiceScopeType == QuizRepository.PRACTICE_SCOPE_GROUP && practiceScopeValue == groupName)) {
+                                    QuizRepository.setPracticeGroupScope(context, groupName)
+                                }
+                            }
+                        )
                     }
-                    CompactBankStateChip(
-                        text = if (practiceScopeType == QuizRepository.PRACTICE_SCOPE_GROUP && practiceScopeValue == groupName) "当前练习范围" else "设为练习范围",
-                        selected = practiceScopeType == QuizRepository.PRACTICE_SCOPE_GROUP && practiceScopeValue == groupName,
-                        onClick = {
-                            if (!(practiceScopeType == QuizRepository.PRACTICE_SCOPE_GROUP && practiceScopeValue == groupName)) {
-                                QuizRepository.setPracticeGroupScope(context, groupName)
+                }
+            }
+
+            if (isExpanded) {
+                items(banksInGroup, key = { "b:${it.id}" }) { bank ->
+                    BankCard(
+                        bank = bank,
+                        isActive = bank.id == activeBank?.id,
+                        isPracticeScope = practiceScopeType == QuizRepository.PRACTICE_SCOPE_BANK && practiceScopeValue == bank.id,
+                        onOpenBankDetail = onOpenBankDetail,
+                        onSetActive = { QuizRepository.setActiveBank(context, bank.id) },
+                        onEdit = {
+                            editTarget = bank
+                            editNameText = bank.name
+                        },
+                        onMove = {
+                            moveTarget = bank
+                            moveGroupText = bank.groupName.ifBlank { DEFAULT_BANK_GROUP_NAME }
+                        },
+                        onDelete = {
+                            if (bank.id != "demo-bank") {
+                                deleteTarget = bank
                             }
                         }
                     )
                 }
-
-                if (isExpanded) {
-                    Spacer(Modifier.height(12.dp))
-                    banksInGroup.forEach { bank ->
-                        BankCard(
-                            bank = bank,
-                            isActive = bank.id == activeBank?.id,
-                            isPracticeScope = practiceScopeType == QuizRepository.PRACTICE_SCOPE_BANK && practiceScopeValue == bank.id,
-                            onOpenBankDetail = onOpenBankDetail,
-                            onSetActive = { QuizRepository.setActiveBank(context, bank.id) },
-                            onEdit = {
-                                editTarget = bank
-                                editNameText = bank.name
-                            },
-                            onMove = {
-                                moveTarget = bank
-                                moveGroupText = bank.groupName.ifBlank { DEFAULT_BANK_GROUP_NAME }
-                            },
-                            onDelete = {
-                                if (bank.id != "demo-bank") {
-                                    deleteTarget = bank
-                                }
-                            }
-                        )
-                        Spacer(Modifier.height(12.dp))
-                    }
-                }
             }
         }
 
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.Start
-        ) {
-            ActionPillButton(
-                icon = Icons.Rounded.ArrowBack,
-                text = "返回首页",
-                primary = false,
-                modifier = Modifier.height(44.dp),
-                onClick = onBack
-            )
+        item {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.Start
+            ) {
+                ActionPillButton(
+                    icon = Icons.Rounded.ArrowBack,
+                    text = "返回首页",
+                    primary = false,
+                    modifier = Modifier.height(44.dp),
+                    onClick = onBack
+                )
+            }
         }
-        Spacer(Modifier.height(ShirohaSpacing.Xl))
+        item { Spacer(Modifier.height(ShirohaSpacing.Xl)) }
     }
 }
 

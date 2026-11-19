@@ -29,6 +29,9 @@ import com.yiqiu.shirohaquiz.ui.theme.ShirohaDimens
 import com.yiqiu.shirohaquiz.ui.theme.ShirohaMotion
 import com.yiqiu.shirohaquiz.ui.theme.ShirohaRadius
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.defaultMinSize
@@ -3146,29 +3149,20 @@ private fun PracticeAnswerSheetDialog(
                         PracticeAnswerSheetLegendChip(text = "锁定", status = PracticeAnswerSheetStatus.LOCKED)
                     }
                 }
-                Column(
+                LazyVerticalGrid(
+                    columns = GridCells.Fixed(5),
                     modifier = Modifier
                         .fillMaxWidth()
-                        .heightIn(max = 420.dp)
-                        .verticalScroll(rememberScrollState()),
+                        .heightIn(max = 420.dp),
+                    horizontalArrangement = Arrangement.spacedBy(7.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    entries.chunked(5).forEach { rowEntries ->
-                        Row(
+                    items(entries, key = { it.index }) { entry ->
+                        PracticeAnswerSheetNumberChip(
+                            entry = entry,
                             modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(7.dp)
-                        ) {
-                            rowEntries.forEach { entry ->
-                                PracticeAnswerSheetNumberChip(
-                                    entry = entry,
-                                    modifier = Modifier.weight(1f),
-                                    onClick = { onJump(entry.index) }
-                                )
-                            }
-                            repeat(5 - rowEntries.size) {
-                                Spacer(modifier = Modifier.weight(1f))
-                            }
-                        }
+                            onClick = { onJump(entry.index) }
+                        )
                     }
                 }
                 if (lockedCount > 0) {

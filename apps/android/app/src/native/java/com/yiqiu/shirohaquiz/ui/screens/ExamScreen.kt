@@ -7,6 +7,9 @@ import androidx.compose.foundation.border
 import com.yiqiu.shirohaquiz.ui.components.shirohaNoRippleClickable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.itemsIndexed
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
@@ -1193,34 +1196,29 @@ private fun ExamAnswerCardDialog(
                     StatusChip("已答")
                     StatusChip("未答")
                 }
-                Column(
-                    modifier = Modifier.verticalScroll(rememberScrollState()),
+                LazyVerticalGrid(
+                    columns = GridCells.Fixed(5),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = 420.dp),
+                    horizontalArrangement = Arrangement.spacedBy(7.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    QuizRepository.examQuestions.chunked(5).forEachIndexed { rowIndex, rowQuestions ->
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(7.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            rowQuestions.forEachIndexed { columnIndex, question ->
-                                val index = rowIndex * 5 + columnIndex
-                                val answeredQuestion = QuizRepository.isExamQuestionAnswered(question)
-                                val currentQuestion = index == QuizRepository.examIndex
-                                ExamAnswerNumberChip(
-                                    text = (index + 1).toString(),
-                                    current = currentQuestion,
-                                    answered = answeredQuestion,
-                                    modifier = Modifier
-                                        .weight(1f)
-                                        .height(36.dp),
-                                    onClick = { onJumpToQuestion(index) }
-                                )
-                            }
-                            repeat(5 - rowQuestions.size) {
-                                Spacer(Modifier.weight(1f))
-                            }
-                        }
+                    itemsIndexed(
+                        QuizRepository.examQuestions,
+                        key = { index, _ -> index }
+                    ) { index, question ->
+                        val answeredQuestion = QuizRepository.isExamQuestionAnswered(question)
+                        val currentQuestion = index == QuizRepository.examIndex
+                        ExamAnswerNumberChip(
+                            text = (index + 1).toString(),
+                            current = currentQuestion,
+                            answered = answeredQuestion,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(36.dp),
+                            onClick = { onJumpToQuestion(index) }
+                        )
                     }
                 }
             }
