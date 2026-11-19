@@ -1021,7 +1021,7 @@ object QuizRepository {
 
     fun currentPracticeScopeSummary(): String {
         val scopeBanks = currentPracticeScopeBanks()
-        val total = scopeBanks.sumOf { bank -> bank.questions.count { !isQuestionSlashed(bank.id, it) } }
+        val total = scopeBanks.sumOf { bank -> (bankQuestionCount(bank.id) - slashedProblemCount(bank)).coerceAtLeast(0) }
         return if (practiceScopeType == PRACTICE_SCOPE_GROUP) {
             "${scopeBanks.size} 个题库 · $total 题"
         } else {
@@ -5701,7 +5701,9 @@ object QuizRepository {
         java.util.Collections.synchronizedSet(mutableSetOf<String>())
 
     private fun markBankDirty(vararg bankIds: String) {
-        bankIds.filter { it.isNotBlank() }.forEach { dirtyBankIds.add(it) }
+        // 占位对象（题目体未解析）从未被修改过，绝不能进脏集：否则 replacePlaceholderBank
+        // 会拒绝把它们换成真实对象，冷启动后首个页面就永远拿不到题目。
+        bankIds.filter { it.isNotBlank() && !unloadedBankIds.contains(it) }.forEach { dirtyBankIds.add(it) }
     }
 
     private fun markContentDirty(vararg keys: String) {
@@ -5935,11 +5937,25 @@ object QuizRepository {
         val loaded = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
             ids.mapNotNull { id -> loadBankFromStorage(context, id)?.let { id to it } }
         }
+        val loadedIds = loaded.map { it.first }.toSet()
+        ids.filterNot { it in loadedIds }.forEach { failedId ->
+            // 文件缺失/损坏时不能一直显示加载中：退化成空库，让 UI 走「没有可练习题目」。
+            unloadedBankIds.remove(failedId)
+            indexedBankQuestionCounts[failedId] = 0
+        }
         loaded.forEach { (id, bank) -> replacePlaceholderBank(id, bank) }
     }
 
     /** 该库题目体是否尚未解析（UI 用来显示加载态）。 */
     fun isBankContentPending(bankId: String): Boolean = unloadedBankIds.contains(bankId)
+
+    /** 斩题数：未加载的库只能按斩题记录数估算（此时题目体未解析）。 */
+    private fun slashedProblemCount(bank: QuizBank): Int =
+        if (unloadedBankIds.contains(bank.id)) {
+            slashedQuestions.count { it.bankId == bank.id }
+        } else {
+            bank.questions.count { isQuestionSlashed(bank.id, it) }
+        }
 
     /** 题目数：未加载的库以索引为准，绝不为此解析题目体。 */
     fun bankQuestionCount(bankId: String): Int {

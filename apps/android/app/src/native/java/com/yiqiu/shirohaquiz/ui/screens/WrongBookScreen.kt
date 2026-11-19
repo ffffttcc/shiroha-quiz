@@ -693,7 +693,7 @@ private fun WrongBookScopeDialog(
                         val key = WRONG_BOOK_PAGE_SCOPE_BANK_PREFIX + bank.id
                         WrongBookScopeOption(
                             title = bank.name,
-                            desc = "错题 ${wrongCountByBank[bank.id] ?: 0} 题 · 共 ${bank.questions.size} 题",
+                            desc = "错题 ${wrongCountByBank[bank.id] ?: 0} 题 · 共 ${QuizRepository.bankQuestionCount(bank.id)} 题",
                             selected = selectedScopeKey == key,
                             onClick = { onSelect(key) }
                         )

@@ -156,8 +156,19 @@ fun PracticeScreen(
     val result = QuizRepository.practiceLastResult
     val isReciteMode = QuizRepository.practiceReciteModeEnabled
     val slashedVersion = QuizRepository.slashedQuestions.joinToString("|") { "${it.bankId}:${it.questionKey}" }
-    val practiceCandidateQuestions = remember(practiceScopeKey, QuizRepository.banks.toList(), slashedVersion) {
-        QuizRepository.activePracticePoolQuestions()
+    // 冷启动时范围库可能还是占位对象：题目体交给 preloadPracticeScopeBanks 在 IO 线程解析，
+    // 未就绪前不装题目池，绝不在组合阶段同步解析整库。
+    val scopeBankIds = remember(practiceScopeKey, QuizRepository.banks.toList()) {
+        QuizRepository.currentPracticeScopeBanks().map { it.id }
+    }
+    val scopeContentPending = scopeBankIds.any { QuizRepository.isBankContentPending(it) }
+    val practiceCandidateQuestions = remember(
+        practiceScopeKey,
+        QuizRepository.banks.toList(),
+        slashedVersion,
+        scopeContentPending
+    ) {
+        if (scopeContentPending) emptyList() else QuizRepository.activePracticePoolQuestions()
     }
     val availableCounts = remember(practiceCandidateQuestions) {
         QuizRepository.questionTypeCounts(practiceCandidateQuestions)
@@ -450,7 +461,9 @@ fun PracticeScreen(
 
         if (practiceCandidateQuestions.isEmpty()) {
             GlassCard {
-                NoticeCard("还没有可练习题目。请先在导入页创建题库。")
+                NoticeCard(
+                    if (scopeContentPending) "正在加载题目…" else "还没有可练习题目。请先在导入页创建题库。"
+                )
             }
             return
         }

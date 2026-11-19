@@ -289,7 +289,7 @@ private fun RecordScopeDialog(
                         }
                         RecordScopeOption(
                             title = bank.name,
-                            desc = "$count 条相关记录 · 共 ${bank.questions.size} 题",
+                            desc = "$count 条相关记录 · 共 ${QuizRepository.bankQuestionCount(bank.id)} 题",
                             selected = selectedScopeKey == key,
                             onClick = { onSelect(key) }
                         )

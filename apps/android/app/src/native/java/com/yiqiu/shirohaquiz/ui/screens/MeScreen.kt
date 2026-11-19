@@ -442,7 +442,7 @@ private fun BankExportDialog(
                                         overflow = TextOverflow.Ellipsis
                                     )
                                     Text(
-                                        text = "${bank.questions.size} 题",
+                                        text = "${QuizRepository.bankQuestionCount(bank.id)} 题",
                                         style = MaterialTheme.typography.bodySmall,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant
                                     )

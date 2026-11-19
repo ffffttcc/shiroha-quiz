@@ -222,7 +222,7 @@ fun ChapterPracticeScreen(
                     val banksInGroup = entry.value
                     // 搜索时强制展开，否则命中的章节会被折叠藏起来。
                     val isExpanded = normalizedQuery.isNotBlank() || groupName in expandedGroups
-                    val totalQuestions = banksInGroup.sumOf { it.questions.size }
+                    val totalQuestions = banksInGroup.sumOf { QuizRepository.bankQuestionCount(it.id) }
 
                     GlassCard(contentPadding = 16.dp) {
                         Row(
@@ -321,7 +321,7 @@ private fun ChapterRow(
                 overflow = TextOverflow.Ellipsis
             )
             Text(
-                text = "${bank.questions.size} 题",
+                text = "${QuizRepository.bankQuestionCount(bank.id)} 题",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )

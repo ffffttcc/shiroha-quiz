@@ -292,7 +292,7 @@ private fun SearchScopeDialog(
                         val key = bank.scopeKey()
                         SearchScopeOption(
                             title = bank.name,
-                            desc = "${bank.questions.size} 题",
+                            desc = "${QuizRepository.bankQuestionCount(bank.id)} 题",
                             selected = selectedScopeKey == key,
                             onClick = { onSelect(key) }
                         )
