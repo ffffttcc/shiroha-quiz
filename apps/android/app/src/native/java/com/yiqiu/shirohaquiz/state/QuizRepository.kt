@@ -464,7 +464,13 @@ object QuizRepository {
         val needsQuestionIdIntegrityMigration =
             prefs.getInt(KEY_QUESTION_ID_INTEGRITY_MIGRATION_VERSION, 0) < QUESTION_ID_INTEGRITY_MIGRATION_VERSION
         migrateBankStorageIfNeeded(context, prefs)
-        val restoredBanks = runCatching { readStoredBanks(context, prefs) }.getOrDefault(emptyList())
+        // 索引模式：启动只解析 KB 级索引，题目体交给后台逐库补全。需要修复题目 id 的老数据走全量。
+        val useBankIndex = prefs.getInt(KEY_BANK_STORAGE_VERSION, 0) >= BANK_STORAGE_VERSION &&
+            !needsQuestionIdIntegrityMigration
+        val restoredBanks = runCatching {
+            if (useBankIndex) readStoredBankIndex(prefs) ?: readStoredBanks(context, prefs)
+            else readStoredBanks(context, prefs)
+        }.getOrDefault(emptyList())
         val restoredWrongBook = runCatching {
             parseWrongBookJson(prefs.getString(KEY_WRONG_BOOK, null))
         }.getOrDefault(emptyList())
@@ -504,6 +510,9 @@ object QuizRepository {
         }
         val sanitizedRestoredBanks = if (needsQuestionIdIntegrityMigration) {
             restoredBankRepairs.map { it.bank }
+        } else if (useBankIndex) {
+            // 占位对象没有题目体：去 demo / sanitize 改为在 hydration 解析该库时做。
+            restoredBanks
         } else {
             restoredBanks
                 .map(::sanitizeBankWithoutQuestionIdRepair)
@@ -643,10 +652,20 @@ object QuizRepository {
         aiRefactorMaxChars = prefs.getInt(KEY_AI_REFACTOR_MAX_CHARS, 30000).coerceIn(5000, 80000)
 
         wrongBook.addAll(migratedWrongBook.map(::sanitizeWrongEntry))
-        slashedQuestions.addAll(sanitizeSlashedEntries(migratedSlashedQuestions, sanitizedRestoredBanks))
         favoriteQuestions.addAll(sanitizeFavoriteEntries(migratedFavoriteQuestions))
-        practiceSequentialProgress.putAll(sanitizeSequentialProgress(restoredSequentialProgress, sanitizedRestoredBanks))
-        practiceReciteSequentialProgress.putAll(sanitizeSequentialProgress(restoredReciteSequentialProgress, sanitizedRestoredBanks))
+        if (useBankIndex) {
+            // 索引模式下题目体尚未解析：按题干键/题数校验会把斩题与顺序进度整体误判为失效，
+            // 因此原样保留，等对应库被解析后再由加载路径处理。
+            slashedQuestions.addAll(migratedSlashedQuestions)
+            practiceSequentialProgress.putAll(restoredSequentialProgress)
+            practiceReciteSequentialProgress.putAll(restoredReciteSequentialProgress)
+        } else {
+            slashedQuestions.addAll(sanitizeSlashedEntries(migratedSlashedQuestions, sanitizedRestoredBanks))
+            practiceSequentialProgress.putAll(sanitizeSequentialProgress(restoredSequentialProgress, sanitizedRestoredBanks))
+            practiceReciteSequentialProgress.putAll(
+                sanitizeSequentialProgress(restoredReciteSequentialProgress, sanitizedRestoredBanks)
+            )
+        }
         studyRecords.addAll(migratedStudyRecords)
         val questionIdIntegrityChanged = needsQuestionIdIntegrityMigration && (
             restoredBankRepairs.any { it.idChanged } ||
@@ -668,6 +687,7 @@ object QuizRepository {
         // when no persist() ran above. Keep the previous "first persist after init rewrites content"
         // behaviour: mark everything now, let the next persist() flush it.
         markAllContentDirty()
+        if (useBankIndex) scheduleBankHydration(context)
     }
 
     fun importBank(
@@ -707,6 +727,7 @@ object QuizRepository {
         if (bankIndex < 0) return false
         val bank = banks[bankIndex]
         val importedAssetDir = File(context.filesDir, "question_assets/import_json_${System.currentTimeMillis()}").apply { mkdirs() }
+        ensureBankLoaded(bankId)
         val appendedQuestions = sanitizeBank(
             bank.copy(
                 questions = bank.questions + newQuestions.map { question ->
@@ -781,6 +802,8 @@ object QuizRepository {
             activeBankId = banks.firstOrNull()?.id
         }
         markAllContentDirty()
+        unloadedBankIds.remove(bankId)
+        indexedBankQuestionCounts.remove(bankId)
         runCatching { bankStorageFile(context, bankId).delete() }
         clampGroupSequentialProgress(removedGroupName)
         ensureValidPracticeScope()
@@ -797,6 +820,7 @@ object QuizRepository {
 
     fun updateBankInfo(context: Context, bankId: String, newGroupName: String, newName: String): Boolean {
         appContext = context.applicationContext
+        ensureBankLoaded(bankId)
         val index = banks.indexOfFirst { it.id == bankId }
         if (index < 0) return false
         val cleanGroupName = normalizeBankGroupName(newGroupName)
@@ -851,6 +875,7 @@ object QuizRepository {
 
     fun updateQuestion(context: Context, bankId: String, updatedQuestion: Question): Boolean {
         appContext = context.applicationContext
+        ensureBankLoaded(bankId)
         val bankIndex = banks.indexOfFirst { it.id == bankId }
         if (bankIndex < 0) return false
         val bank = banks[bankIndex]
@@ -883,6 +908,7 @@ object QuizRepository {
 
     fun replaceBankQuestions(context: Context, bankId: String, questions: List<Question>): Boolean {
         appContext = context.applicationContext
+        ensureAllBanksLoaded()
         val bankIndex = banks.indexOfFirst { it.id == bankId }
         if (bankIndex < 0) return false
 
@@ -1019,6 +1045,7 @@ object QuizRepository {
     }
 
     fun activePracticePoolSources(bank: QuizBank? = null): List<PracticeQuestionSource> {
+        ensureAllBanksLoaded()
         val scopeBanks = bank?.let(::listOf) ?: currentPracticeScopeBanks()
         return scopeBanks.flatMap { sourceBank ->
             sourceBank.questions
@@ -1386,6 +1413,7 @@ object QuizRepository {
     fun updateCurrentPracticeQuestion(updated: Question): Boolean {
         val current = currentPracticeQuestion() ?: return false
         val targetBank = bankForPracticeQuestion(current) ?: return false
+        ensureBankLoaded(targetBank.id)
         val bankIndex = banks.indexOfFirst { it.id == targetBank.id }
         if (bankIndex < 0) return false
         val questionIndex = banks[bankIndex].questions.indexOfFirst { it.id == current.id }
@@ -1445,6 +1473,7 @@ object QuizRepository {
         if (normalizedAnalysis.isBlank()) return false
         val current = currentPracticeQuestion() ?: return false
         val targetBank = bankForPracticeQuestion(current) ?: return false
+        ensureBankLoaded(targetBank.id)
         val bankIndex = banks.indexOfFirst { it.id == targetBank.id }
         if (bankIndex < 0) return false
         val questionIndex = banks[bankIndex].questions.indexOfFirst { it.id == current.id }
@@ -1653,12 +1682,14 @@ object QuizRepository {
     }
 
     fun slashedQuestionCount(bankId: String): Int {
+        ensureBankLoaded(bankId)
         val bank = banks.firstOrNull { it.id == bankId } ?: return 0
         val validKeys = bank.questions.map(::questionKey).toSet()
         return slashedQuestions.count { it.bankId == bankId && it.questionKey in validKeys }
     }
 
     fun slashedQuestionsForBank(bankId: String): List<Question> {
+        ensureBankLoaded(bankId)
         val bank = banks.firstOrNull { it.id == bankId } ?: return emptyList()
         val slashedKeys = slashedQuestions
             .filter { it.bankId == bankId }
@@ -2509,6 +2540,7 @@ object QuizRepository {
 
 
     fun startExam(questionCount: Int, durationMinutes: Int): Boolean {
+        ensureAllBanksLoaded()
         return startExam(
             questionCount = questionCount,
             durationMinutes = durationMinutes,
@@ -2823,6 +2855,7 @@ object QuizRepository {
     }
 
     fun exportFullBackupZip(): ByteArray {
+        ensureAllBanksLoaded()
         return buildBackupZip(
             kind = "shiroha_quiz_full_backup",
             selectedBanks = banks,
@@ -2839,6 +2872,7 @@ object QuizRepository {
     /** Call on the repository's owning (UI) thread, with no concurrent content edits. */
     fun replaceContentFromBackupBytes(bytes: ByteArray): String {
         val context = appContext ?: return "恢复失败：原生仓库尚未初始化。"
+        ensureAllBanksLoaded()
         val incoming = runCatching { readValidatedBackup(bytes) }
             .getOrElse { return "恢复失败：${it.message ?: "备份不安全或数据损坏"}。" }
         val previous = currentBackupContent()
@@ -2992,6 +3026,9 @@ object QuizRepository {
         markAllContentDirty()
         banks.clear()
         banks.addAll(content.banks)
+        unloadedBankIds.clear()
+        indexedBankQuestionCounts.clear()
+        content.banks.forEach { bank -> indexedBankQuestionCounts[bank.id] = bank.questions.size }
         wrongBook.clear()
         wrongBook.addAll(content.wrong)
         favoriteQuestions.clear()
@@ -4569,6 +4606,8 @@ object QuizRepository {
         markAllContentDirty()
         dirtyContentKeys.clear()
         dirtyBankIds.clear()
+        unloadedBankIds.clear()
+        indexedBankQuestionCounts.clear()
         resetPracticeState()
         initialized = false
         appContext = null
@@ -5317,6 +5356,8 @@ object QuizRepository {
     }
 
     private fun clampGroupSequentialProgress(groupName: String) {
+        // 组内题数需要真实题目体（占位库 questions 为空会算小），先补全。
+        ensureAllBanksLoaded()
         val cleanGroup = normalizeBankGroupName(groupName)
         val key = "GROUP:$cleanGroup"
         val total = banks
@@ -5750,6 +5791,103 @@ object QuizRepository {
         dirtyContentKeys.clear()
         if (banksDirty && !banksFlushed) dirtyContentKeys.add(KEY_BANKS)
     }
+    // ---- 惰性加载：索引占位 + 后台逐库补全 ----
+
+    private val bankHydrationExecutor: java.util.concurrent.ExecutorService =
+        java.util.concurrent.Executors.newSingleThreadExecutor { runnable ->
+            Thread(runnable, "bank-hydration").apply { isDaemon = true }
+        }
+
+    /** 仍是索引占位对象（题目体未解析）的库 id。占位对象永远不许写盘。 */
+    private val unloadedBankIds: MutableSet<String> =
+        java.util.Collections.synchronizedSet(mutableSetOf<String>())
+
+    /** 索引里的题数；占位库以它为准（内存占位对象 questions 为空）。 */
+    private val indexedBankQuestionCounts: MutableMap<String, Int> =
+        java.util.Collections.synchronizedMap(mutableMapOf<String, Int>())
+
+    private fun readStoredBankIndex(prefs: SharedPreferences): List<QuizBank>? {
+        val raw = prefs.getString(KEY_BANK_INDEX, null)
+        if (raw.isNullOrBlank()) return null
+        val array = runCatching { JSONArray(raw) }.getOrNull() ?: return null
+        val restored = ArrayList<QuizBank>(array.length())
+        for (i in 0 until array.length()) {
+            val item = array.optJSONObject(i) ?: continue
+            val id = item.optString("id")
+            if (id.isBlank()) continue
+            val questionCount = item.optInt("questionCount", 0)
+            indexedBankQuestionCounts[id] = questionCount
+            if (questionCount > 0) unloadedBankIds.add(id)
+            restored.add(
+                QuizBank(
+                    id = id,
+                    name = item.optString("name"),
+                    questions = emptyList(),
+                    groupName = normalizeBankGroupName(item.optString("groupName", DEFAULT_BANK_GROUP_NAME))
+                )
+            )
+        }
+        return restored
+    }
+
+    private fun loadBankFromStorage(context: Context, bankId: String): QuizBank? {
+        val parsed = runCatching {
+            bankStorageFile(context, bankId).takeIf { it.isFile }?.let { file ->
+                parseBanksJson(file.readText(Charsets.UTF_8)).firstOrNull()
+            }
+        }.getOrNull() ?: return null
+        return runCatching { sanitizeBankWithoutQuestionIdRepair(parsed) }.getOrDefault(parsed)
+    }
+
+    /** 只替换「索引生成的占位对象」：题目体仍为空、元数据一致、且不在脏集里。 */
+    private fun replacePlaceholderBank(bankId: String, loaded: QuizBank): Boolean {
+        if (dirtyBankIds.contains(bankId)) return false
+        if (!unloadedBankIds.contains(bankId)) return false
+        val index = banks.indexOfFirst { it.id == bankId }
+        if (index < 0) return false
+        val current = banks[index]
+        if (current.questions.isNotEmpty()) return false
+        if (current.name != loaded.name) return false
+        banks[index] = loaded
+        unloadedBankIds.remove(bankId)
+        indexedBankQuestionCounts[bankId] = loaded.questions.size
+        return true
+    }
+
+    private fun scheduleBankHydration(context: Context) {
+        val pending = unloadedBankIds.toList()
+        if (pending.isEmpty()) return
+        bankHydrationExecutor.execute {
+            pending.forEach { bankId ->
+                if (!unloadedBankIds.contains(bankId)) return@forEach
+                val loaded = loadBankFromStorage(context, bankId) ?: return@forEach
+                Snapshot.withMutableSnapshot {
+                    if (appContext != context) return@withMutableSnapshot
+                    replacePlaceholderBank(bankId, loaded)
+                }
+            }
+        }
+    }
+
+    /** 同步补全单个库（改名/改题/练习等需要题目体的入口先调用）。 */
+    private fun ensureBankLoaded(bankId: String) {
+        if (bankId.isBlank() || !unloadedBankIds.contains(bankId)) return
+        val context = appContext ?: return
+        val loaded = loadBankFromStorage(context, bankId) ?: return
+        replacePlaceholderBank(bankId, loaded)
+    }
+
+    /** 同步补全全部库（导出/恢复/练习池等需要全量题目体的入口先调用）。 */
+    private fun ensureAllBanksLoaded() {
+        val pending = unloadedBankIds.toList()
+        if (pending.isEmpty()) return
+        val context = appContext ?: return
+        pending.forEach { bankId ->
+            val loaded = loadBankFromStorage(context, bankId) ?: return@forEach
+            replacePlaceholderBank(bankId, loaded)
+        }
+    }
+
     // ---- 题库分文件存储（见 docs/存储根治-设计.md）----
 
     private fun bankStorageDir(context: Context): File = File(context.filesDir, BANK_STORAGE_DIR_NAME)
@@ -5775,7 +5913,14 @@ object QuizRepository {
                     .put("id", bank.id)
                     .put("name", bank.name)
                     .put("groupName", normalizeBankGroupName(bank.groupName))
-                    .put("questionCount", bank.questions.size)
+                    .put(
+                        "questionCount",
+                        if (unloadedBankIds.contains(bank.id)) {
+                            indexedBankQuestionCounts[bank.id] ?: bank.questions.size
+                        } else {
+                            bank.questions.size
+                        }
+                    )
                     .put("file", bankStorageSafeId(bank.id) + ".json")
                     .put("version", System.currentTimeMillis())
             )
@@ -5794,7 +5939,8 @@ object QuizRepository {
     }
 
     private fun flushDirtyBankFiles(context: Context) {
-        val targets = if (dirtyBankIds.isEmpty()) banks.toList() else banks.filter { dirtyBankIds.contains(it.id) }
+        val candidates = banks.filterNot { unloadedBankIds.contains(it.id) }
+        val targets = if (dirtyBankIds.isEmpty()) candidates else candidates.filter { dirtyBankIds.contains(it.id) }
         targets.forEach { bank -> writeBankStorageFile(context, bank) }
         dirtyBankIds.clear()
     }
