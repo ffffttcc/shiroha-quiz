@@ -31,6 +31,7 @@ import androidx.compose.material.icons.rounded.Description
 import androidx.compose.material.icons.rounded.CloudUpload
 import androidx.compose.material.icons.rounded.FactCheck
 import androidx.compose.material.icons.rounded.FileOpen
+import androidx.compose.material.icons.rounded.Image
 import androidx.compose.material.icons.rounded.LightMode
 import androidx.compose.material.icons.rounded.Save
 import androidx.compose.material.icons.rounded.Settings
@@ -510,6 +511,20 @@ fun AppearancePreferenceScreen(
     onBack: () -> Unit
 ) {
     val context = LocalContext.current
+    var backgroundMessage by remember { mutableStateOf<String?>(null) }
+    val backgroundImageLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        runCatching {
+            context.contentResolver.takePersistableUriPermission(
+                uri,
+                android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION
+            )
+        }
+        val applied = QuizRepository.setCustomBackgroundImage(context, uri)
+        backgroundMessage = if (applied) "已应用自定义背景。" else "背景图片导入失败，请换一张试试。"
+    }
 
     Column(
         modifier = Modifier
@@ -536,6 +551,52 @@ fun AppearancePreferenceScreen(
                 darkThemeEnabled = QuizRepository.darkThemeEnabled,
                 onThemeChange = { enabled -> QuizRepository.setDarkThemeEnabled(context, enabled) }
             )
+            Spacer(Modifier.height(12.dp))
+            PreferenceSwitchRow(
+                title = "自定义背景",
+                desc = "用本地图片做 App 背景；关闭后恢复默认渐变。",
+                checked = QuizRepository.customBackgroundEnabled,
+                onCheckedChange = { enabled ->
+                    QuizRepository.setCustomBackgroundEnabled(context, enabled)
+                    backgroundMessage = when {
+                        !enabled -> null
+                        QuizRepository.hasCustomBackgroundImage(context) -> null
+                        else -> "还没有选择图片，点「选择图片」挑一张。"
+                    }
+                }
+            )
+            if (QuizRepository.customBackgroundEnabled) {
+                Spacer(Modifier.height(10.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    ActionPillButton(
+                        icon = Icons.Rounded.Image,
+                        text = "选择图片",
+                        primary = true,
+                        modifier = Modifier.weight(1f).height(42.dp),
+                        fillWidthContent = true,
+                        onClick = { backgroundImageLauncher.launch(arrayOf("image/*")) }
+                    )
+                    ActionPillButton(
+                        icon = Icons.Rounded.Delete,
+                        text = "清除背景",
+                        primary = false,
+                        modifier = Modifier.weight(1f).height(42.dp),
+                        fillWidthContent = true,
+                        onClick = {
+                            QuizRepository.clearCustomBackground(context)
+                            backgroundMessage = "已清除自定义背景。"
+                        }
+                    )
+                }
+                backgroundMessage?.let { message ->
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        text = message,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
             Spacer(Modifier.height(12.dp))
             PreferenceSwitchRow(
                 title = "卡片动画",

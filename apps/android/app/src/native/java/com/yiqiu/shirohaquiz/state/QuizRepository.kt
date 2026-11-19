@@ -188,6 +188,9 @@ object QuizRepository {
     private const val BANK_STORAGE_DIR_NAME = "banks"
     private const val BANK_STORAGE_STAGING_DIR_NAME = ".staging"
     private const val BANK_STORAGE_LEGACY_FILE_NAME = "_legacy_banks.json"
+    private const val KEY_CUSTOM_BACKGROUND_ENABLED = "custom_background_enabled"
+    private const val KEY_CUSTOM_BACKGROUND_VERSION = "custom_background_version"
+    private const val BACKGROUND_DIR_NAME = "background"
     private const val KEY_PRACTICE_SCOPE_TYPE = "practice_scope_type"
     private const val KEY_PRACTICE_SCOPE_VALUE = "practice_scope_value"
     private const val KEY_WRONG_BOOK = "wrong_book"
@@ -365,6 +368,13 @@ object QuizRepository {
     private var preferredExamTypeScoresText by mutableStateOf("")
     var startupSplashEnabled by mutableStateOf(true)
         private set
+    var customBackgroundEnabled by mutableStateOf(false)
+        private set
+
+    /** 背景图版本：换图/清除时自增，供 Compose 失效并重建解码缓存（路径不进状态）。 */
+    var customBackgroundVersion by mutableStateOf(0)
+        private set
+
     var darkThemeEnabled by mutableStateOf(false)
         private set
     var cardAnimationEnabled by mutableStateOf(true)
@@ -622,6 +632,8 @@ object QuizRepository {
         preferredExamTypeScoresText = prefs.getString(KEY_EXAM_PREFERRED_TYPE_SCORES, "") ?: ""
         startupSplashEnabled = prefs.getBoolean(KEY_STARTUP_SPLASH_ENABLED, true)
         darkThemeEnabled = prefs.getBoolean(KEY_DARK_THEME_ENABLED, false)
+        customBackgroundEnabled = prefs.getBoolean(KEY_CUSTOM_BACKGROUND_ENABLED, false)
+        customBackgroundVersion = prefs.getInt(KEY_CUSTOM_BACKGROUND_VERSION, 0)
         cardAnimationEnabled = prefs.getBoolean(KEY_CARD_ANIMATION_ENABLED, true)
         shirohaModeEnabled = prefs.getBoolean(KEY_SHIROHA_MODE_ENABLED, false)
         tabletSideNavigationEnabled = prefs.getBoolean(KEY_TABLET_SIDE_NAVIGATION_ENABLED, false)
@@ -2114,6 +2126,66 @@ object QuizRepository {
         appContext = context.applicationContext
         startupSplashEnabled = enabled
         persist()
+    }
+
+    /** 现有自定义背景图文件；没有则返回 null。 */
+    fun customBackgroundImageFile(context: Context): File? {
+        val dir = File(context.filesDir, BACKGROUND_DIR_NAME)
+        if (!dir.isDirectory) return null
+        return dir.listFiles()?.firstOrNull { it.isFile && it.name.startsWith("bg.") }
+    }
+
+    fun hasCustomBackgroundImage(context: Context): Boolean = customBackgroundImageFile(context) != null
+
+    fun setCustomBackgroundEnabled(context: Context, enabled: Boolean) {
+        appContext = context.applicationContext
+        customBackgroundEnabled = enabled
+        persist()
+    }
+
+    /** 把 SAF 选中的图片复制成单文件背景图；成功才开开关并自增版本。 */
+    fun setCustomBackgroundImage(context: Context, uri: android.net.Uri): Boolean {
+        appContext = context.applicationContext
+        val dir = File(context.filesDir, BACKGROUND_DIR_NAME)
+        val copied = runCatching {
+            check(dir.isDirectory || dir.mkdirs()) { "无法创建背景目录" }
+            val extension = backgroundExtensionFor(context, uri)
+            val temp = File(dir, "bg.tmp")
+            context.contentResolver.openInputStream(uri)?.use { input ->
+                temp.outputStream().use { output -> input.copyTo(output) }
+            } ?: error("无法读取所选图片")
+            check(temp.length() > 0L) { "所选图片为空" }
+            dir.listFiles()?.filter { it.isFile && it.name != temp.name }?.forEach { it.delete() }
+            check(temp.renameTo(File(dir, "bg.$extension"))) { "无法保存背景图片" }
+            true
+        }.isSuccess
+        if (copied) {
+            customBackgroundEnabled = true
+            customBackgroundVersion += 1
+            persist()
+        }
+        return copied
+    }
+
+    /** 清除背景图并关闭自定义背景。 */
+    fun clearCustomBackground(context: Context) {
+        appContext = context.applicationContext
+        runCatching {
+            File(context.filesDir, BACKGROUND_DIR_NAME).listFiles()?.forEach { it.delete() }
+        }
+        customBackgroundEnabled = false
+        customBackgroundVersion += 1
+        persist()
+    }
+
+    private fun backgroundExtensionFor(context: Context, uri: android.net.Uri): String {
+        return when (context.contentResolver.getType(uri)?.lowercase()) {
+            "image/png" -> "png"
+            "image/webp" -> "webp"
+            "image/jpeg", "image/jpg" -> "jpg"
+            "image/gif" -> "gif"
+            else -> "img"
+        }
     }
 
     fun setDarkThemeEnabled(context: Context, enabled: Boolean) {
@@ -4628,6 +4700,8 @@ object QuizRepository {
         unloadedBankIds.clear()
         indexedBankQuestionCounts.clear()
         indexedBankTypeCounts.clear()
+        customBackgroundEnabled = false
+        customBackgroundVersion = 0
         resetPracticeState()
         initialized = false
         appContext = null
@@ -5771,6 +5845,8 @@ object QuizRepository {
             .putString(KEY_EXAM_PREFERRED_TYPE_SCORES, preferredExamTypeScoresText)
             .putBoolean(KEY_STARTUP_SPLASH_ENABLED, startupSplashEnabled)
             .putBoolean(KEY_DARK_THEME_ENABLED, darkThemeEnabled)
+            .putBoolean(KEY_CUSTOM_BACKGROUND_ENABLED, customBackgroundEnabled)
+            .putInt(KEY_CUSTOM_BACKGROUND_VERSION, customBackgroundVersion)
             .putBoolean(KEY_CARD_ANIMATION_ENABLED, cardAnimationEnabled)
             .putBoolean(KEY_SHIROHA_MODE_ENABLED, shirohaModeEnabled)
             .putBoolean(KEY_TABLET_SIDE_NAVIGATION_ENABLED, tabletSideNavigationEnabled)

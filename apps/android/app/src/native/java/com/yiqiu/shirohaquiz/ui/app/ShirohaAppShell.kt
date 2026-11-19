@@ -61,6 +61,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.yiqiu.shirohaquiz.document.DocumentRecognitionManager
 import com.yiqiu.shirohaquiz.state.QuizRepository
+import com.yiqiu.shirohaquiz.ui.components.AppBackground
 import com.yiqiu.shirohaquiz.ui.components.DocumentTaskCapsule
 import com.yiqiu.shirohaquiz.ui.screens.AboutScreen
 import com.yiqiu.shirohaquiz.ui.screens.AiSettingsScreen
@@ -246,12 +247,19 @@ fun ShirohaAppShell() {
     }
 
     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+        val customBackgroundEnabled = QuizRepository.customBackgroundEnabled
+        // 背景层固定在最底层：只依赖「开关 + version」，滚动/翻页不会触发它重组。
+        AppBackground()
         val useSideNavigation = QuizRepository.tabletSideNavigationEnabled &&
             maxWidth >= 600.dp &&
             maxHeight >= 480.dp
 
         Scaffold(
-            containerColor = MaterialTheme.colorScheme.background,
+            containerColor = if (customBackgroundEnabled) {
+                Color.Transparent
+            } else {
+                MaterialTheme.colorScheme.background
+            },
             bottomBar = {
                 if (!useSideNavigation) {
                     Column {
@@ -323,14 +331,21 @@ fun ShirohaAppShell() {
                     modifier = Modifier
                         .weight(1f)
                         .fillMaxHeight()
-                        .background(
-                            brush = Brush.verticalGradient(
-                                colors = listOf(
-                                    ShirohaColors.BgGradientTop,
-                                    ShirohaColors.BgGradientMiddle,
-                                    ShirohaColors.BgGradientBottom
+                        .then(
+                            // 有自定义背景时让这层不透明渐变让位，否则背景图会被整块盖住。
+                            if (customBackgroundEnabled) {
+                                Modifier
+                            } else {
+                                Modifier.background(
+                                    brush = Brush.verticalGradient(
+                                        colors = listOf(
+                                            ShirohaColors.BgGradientTop,
+                                            ShirohaColors.BgGradientMiddle,
+                                            ShirohaColors.BgGradientBottom
+                                        )
+                                    )
                                 )
-                            )
+                            }
                         )
                 ) {
                     AnimatedContent(
