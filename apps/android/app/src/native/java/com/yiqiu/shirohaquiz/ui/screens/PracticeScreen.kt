@@ -135,7 +135,8 @@ import kotlin.math.abs
 fun PracticeScreen(
     onGoExam: () -> Unit = {},
     onOpenRecords: () -> Unit = {},
-    onOpenQuickEdit: () -> Unit = {}
+    onOpenQuickEdit: () -> Unit = {},
+    onOpenChapterPractice: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val practiceScopeKey = QuizRepository.currentPracticeScopeKey()
@@ -441,6 +442,7 @@ fun PracticeScreen(
 
             if (!isPracticeRunning) {
                 CompactPracticeSetupHero()
+                ChapterPracticeEntryCard(onClick = onOpenChapterPractice)
             }
         }
 
