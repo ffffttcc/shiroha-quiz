@@ -1,7 +1,9 @@
 package com.yiqiu.shirohaquiz.ui.theme
 
+import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
+import com.yiqiu.shirohaquiz.state.QuizRepository
 
 object ShirohaColors {
     var isDarkMode: Boolean = false
@@ -160,4 +162,19 @@ object ShirohaMotion {
     val HeroFloatDistance = 2.6.dp
     const val LoadingScaleMin = 0.98f
     const val LoadingScaleMax = 1.02f
+}
+
+/**
+ * 容器底色按「界面不透明度」打折：只乘 alpha，色相/文字色一律不动。
+ *
+ * 性能要点（拖动滑杆时）：
+ * - alpha 在**读取处**相乘，不回写 [ShirohaColors] 单例，也不塞进 MaterialTheme.colorScheme，
+ *   所以只有真正调用本函数的 surface 会重组，不会整棵树重组。
+ * - 函数体内读 [QuizRepository.contentSurfaceAlpha]，Compose 只把它当作状态依赖订阅。
+ * - 背景图解码 key 是 version+screenWidthDp，与本值无关，拖滑杆不会重新解码。
+ */
+@Composable
+fun shirohaSurface(base: Color): Color {
+    val factor = QuizRepository.contentSurfaceAlphaFactor()
+    return if (factor >= 1f) base else base.copy(alpha = base.alpha * factor)
 }

@@ -193,7 +193,7 @@ object QuizRepository {
     private const val BANK_STORAGE_LEGACY_FILE_NAME = "_legacy_banks.json"
     private const val KEY_CUSTOM_BACKGROUND_ENABLED = "custom_background_enabled"
     private const val KEY_CUSTOM_BACKGROUND_VERSION = "custom_background_version"
-    private const val KEY_CUSTOM_BACKGROUND_SCRIM = "custom_background_scrim"
+    private const val KEY_CONTENT_SURFACE_ALPHA = "content_surface_alpha"
     private const val BACKGROUND_DIR_NAME = "background"
     private const val KEY_PRACTICE_SCOPE_TYPE = "practice_scope_type"
     private const val KEY_PRACTICE_SCOPE_VALUE = "practice_scope_value"
@@ -379,8 +379,11 @@ object QuizRepository {
     var customBackgroundVersion by mutableStateOf(0)
         private set
 
-    /** 蒙层浓度百分比 0–100；-1 = 未设置过，按主题默认（深 55 / 浅 32）。 */
-    var customBackgroundScrim by mutableStateOf(-1)
+    /**
+     * 界面不透明度 0f..1f：只乘在容器底色（卡片/选项行/面板/底栏）上，文字色不受影响。
+     * -1f = 未设置过 → 生效值 1f（完全不透明，与老观感一致）。
+     */
+    var contentSurfaceAlpha by mutableStateOf(-1f)
         private set
 
     var darkThemeEnabled by mutableStateOf(false)
@@ -644,7 +647,7 @@ object QuizRepository {
         darkThemeEnabled = prefs.getBoolean(KEY_DARK_THEME_ENABLED, false)
         customBackgroundEnabled = prefs.getBoolean(KEY_CUSTOM_BACKGROUND_ENABLED, false)
         customBackgroundVersion = prefs.getInt(KEY_CUSTOM_BACKGROUND_VERSION, 0)
-        customBackgroundScrim = prefs.getInt(KEY_CUSTOM_BACKGROUND_SCRIM, -1)
+        contentSurfaceAlpha = prefs.getFloat(KEY_CONTENT_SURFACE_ALPHA, -1f)
         cardAnimationEnabled = prefs.getBoolean(KEY_CARD_ANIMATION_ENABLED, true)
         shirohaModeEnabled = prefs.getBoolean(KEY_SHIROHA_MODE_ENABLED, false)
         tabletSideNavigationEnabled = prefs.getBoolean(KEY_TABLET_SIDE_NAVIGATION_ENABLED, false)
@@ -2149,24 +2152,20 @@ object QuizRepository {
     fun hasCustomBackgroundImage(context: Context): Boolean = customBackgroundImageFile(context) != null
 
     /** 拖动滑杆过程中：只更新 Compose 状态，绝不落盘（否则每帧 persist）。 */
-    fun updateCustomBackgroundScrimPreview(percent: Int) {
-        customBackgroundScrim = percent.coerceIn(0, 100)
+    fun updateContentSurfaceAlphaPreview(alpha: Float) {
+        contentSurfaceAlpha = alpha.coerceIn(0f, 1f)
     }
 
-    /** 松手后落盘当前浓度（onValueChangeFinished 调用）。 */
-    fun commitCustomBackgroundScrim(context: Context) {
+    /** 松手后落盘当前不透明度（onValueChangeFinished 调用）。 */
+    fun commitContentSurfaceAlpha(context: Context) {
         appContext = context.applicationContext
         persist()
     }
 
-    /** 未设置过时的主题默认浓度（保持老观感：深 55 / 浅 32）。 */
-    fun customBackgroundDefaultScrimPercent(): Int = if (darkThemeEnabled) 55 else 32
-
-    /** 实际使用的蒙层浓度 0f..1f：设过就用用户的，否则跟随主题默认。 */
-    fun customBackgroundScrimAlpha(): Float {
-        val stored = customBackgroundScrim
-        val percent = if (stored >= 0) stored else customBackgroundDefaultScrimPercent()
-        return percent.coerceIn(0, 100) / 100f
+    /** 实际生效的界面不透明度 0f..1f：未设置过 = 1f（与今天完全一致）。 */
+    fun contentSurfaceAlphaFactor(): Float {
+        val stored = contentSurfaceAlpha
+        return if (stored >= 0f) stored.coerceIn(0f, 1f) else 1f
     }
 
     fun setCustomBackgroundEnabled(context: Context, enabled: Boolean) {
@@ -4735,7 +4734,7 @@ object QuizRepository {
         indexedBankTypeCounts.clear()
         customBackgroundEnabled = false
         customBackgroundVersion = 0
-        customBackgroundScrim = -1
+        contentSurfaceAlpha = -1f
         resetPracticeState()
         initialized = false
         appContext = null
@@ -5881,7 +5880,7 @@ object QuizRepository {
             .putBoolean(KEY_DARK_THEME_ENABLED, darkThemeEnabled)
             .putBoolean(KEY_CUSTOM_BACKGROUND_ENABLED, customBackgroundEnabled)
             .putInt(KEY_CUSTOM_BACKGROUND_VERSION, customBackgroundVersion)
-            .putInt(KEY_CUSTOM_BACKGROUND_SCRIM, customBackgroundScrim)
+            .putFloat(KEY_CONTENT_SURFACE_ALPHA, contentSurfaceAlpha)
             .putBoolean(KEY_CARD_ANIMATION_ENABLED, cardAnimationEnabled)
             .putBoolean(KEY_SHIROHA_MODE_ENABLED, shirohaModeEnabled)
             .putBoolean(KEY_TABLET_SIDE_NAVIGATION_ENABLED, tabletSideNavigationEnabled)

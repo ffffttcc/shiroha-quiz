@@ -4,14 +4,12 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import androidx.compose.foundation.Image
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.produceState
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
@@ -42,6 +40,7 @@ fun AppBackground(modifier: Modifier = Modifier) {
         }
     }
     val bitmap = image ?: return
+    // 不再盖蒙层：可读性交给「界面不透明度」（容器底色减淡，文字不动）。
     Box(modifier = modifier.fillMaxSize()) {
         Image(
             bitmap = bitmap,
@@ -49,9 +48,6 @@ fun AppBackground(modifier: Modifier = Modifier) {
             modifier = Modifier.fillMaxSize(),
             contentScale = ContentScale.Crop
         )
-        // 固定蒙层保证文字可读；浓度可调（未设置时跟随主题默认），只影响重组不影响解码。
-        val scrimAlpha = QuizRepository.customBackgroundScrimAlpha()
-        Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = scrimAlpha)))
     }
 }
 

@@ -69,6 +69,7 @@ import com.yiqiu.shirohaquiz.ui.theme.ShirohaDimens
 import com.yiqiu.shirohaquiz.ui.theme.ShirohaMotion
 import com.yiqiu.shirohaquiz.ui.theme.ShirohaRadius
 import com.yiqiu.shirohaquiz.ui.theme.ShirohaSpacing
+import com.yiqiu.shirohaquiz.ui.theme.shirohaSurface
 import com.yiqiu.shirohaquiz.ui.text.LatexDisplayFormatter
 
 
@@ -166,7 +167,7 @@ fun GlassCard(
             .fillMaxWidth()
             .cardRiseMotion(animated && QuizRepository.cardAnimationEnabled),
         shape = RoundedCornerShape(ShirohaRadius.Lg),
-        colors = CardDefaults.cardColors(containerColor = ShirohaColors.CardSoft),
+        colors = CardDefaults.cardColors(containerColor = shirohaSurface(ShirohaColors.CardSoft)),
         border = BorderStroke(ShirohaDimens.Hairline, ShirohaColors.LineSoft),
         elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
     ) {
@@ -361,11 +362,14 @@ fun QuizOptionCard(
     val interactionSource = remember { MutableInteractionSource() }
     val isCorrect = resultStyle == QuizOptionResultStyle.Correct
     val isWrong = resultStyle == QuizOptionResultStyle.Wrong
-    val containerColor = when (resultStyle) {
-        QuizOptionResultStyle.Correct -> ShirohaColors.StateSuccessSoft.copy(alpha = if (ShirohaColors.isDarkMode) 0.9f else 0.72f)
-        QuizOptionResultStyle.Wrong -> ShirohaColors.StateDangerSoft.copy(alpha = if (ShirohaColors.isDarkMode) 0.9f else 0.72f)
-        QuizOptionResultStyle.Neutral -> if (selected) ShirohaColors.BrandPrimarySoft else ShirohaColors.CardWhite84
-    }
+    // 选项行底色同样受「界面不透明度」影响；正确/错误的语义色保留色相，只减淡 alpha。
+    val containerColor = shirohaSurface(
+        when (resultStyle) {
+            QuizOptionResultStyle.Correct -> ShirohaColors.StateSuccessSoft.copy(alpha = if (ShirohaColors.isDarkMode) 0.9f else 0.72f)
+            QuizOptionResultStyle.Wrong -> ShirohaColors.StateDangerSoft.copy(alpha = if (ShirohaColors.isDarkMode) 0.9f else 0.72f)
+            QuizOptionResultStyle.Neutral -> if (selected) ShirohaColors.BrandPrimarySoft else ShirohaColors.CardWhite84
+        }
+    )
     val borderColor = when (resultStyle) {
         QuizOptionResultStyle.Correct -> ShirohaColors.StateSuccess.copy(alpha = 0.45f)
         QuizOptionResultStyle.Wrong -> ShirohaColors.StateDanger.copy(alpha = 0.45f)
@@ -495,7 +499,7 @@ fun UploadPanel(
 ) {
     Surface(
         shape = RoundedCornerShape(ShirohaRadius.Lg),
-        color = ShirohaColors.CardSoft,
+        color = shirohaSurface(ShirohaColors.CardSoft),
         border = BorderStroke(ShirohaDimens.Hairline, ShirohaColors.LineSoft)
     ) {
         Column(
