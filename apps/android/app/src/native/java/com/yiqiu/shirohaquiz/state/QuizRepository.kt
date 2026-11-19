@@ -190,6 +190,7 @@ object QuizRepository {
     private const val BANK_STORAGE_LEGACY_FILE_NAME = "_legacy_banks.json"
     private const val KEY_CUSTOM_BACKGROUND_ENABLED = "custom_background_enabled"
     private const val KEY_CUSTOM_BACKGROUND_VERSION = "custom_background_version"
+    private const val KEY_CUSTOM_BACKGROUND_SCRIM = "custom_background_scrim"
     private const val BACKGROUND_DIR_NAME = "background"
     private const val KEY_PRACTICE_SCOPE_TYPE = "practice_scope_type"
     private const val KEY_PRACTICE_SCOPE_VALUE = "practice_scope_value"
@@ -373,6 +374,10 @@ object QuizRepository {
 
     /** 背景图版本：换图/清除时自增，供 Compose 失效并重建解码缓存（路径不进状态）。 */
     var customBackgroundVersion by mutableStateOf(0)
+        private set
+
+    /** 蒙层浓度百分比 0–100；-1 = 未设置过，按主题默认（深 55 / 浅 32）。 */
+    var customBackgroundScrim by mutableStateOf(-1)
         private set
 
     var darkThemeEnabled by mutableStateOf(false)
@@ -634,6 +639,7 @@ object QuizRepository {
         darkThemeEnabled = prefs.getBoolean(KEY_DARK_THEME_ENABLED, false)
         customBackgroundEnabled = prefs.getBoolean(KEY_CUSTOM_BACKGROUND_ENABLED, false)
         customBackgroundVersion = prefs.getInt(KEY_CUSTOM_BACKGROUND_VERSION, 0)
+        customBackgroundScrim = prefs.getInt(KEY_CUSTOM_BACKGROUND_SCRIM, -1)
         cardAnimationEnabled = prefs.getBoolean(KEY_CARD_ANIMATION_ENABLED, true)
         shirohaModeEnabled = prefs.getBoolean(KEY_SHIROHA_MODE_ENABLED, false)
         tabletSideNavigationEnabled = prefs.getBoolean(KEY_TABLET_SIDE_NAVIGATION_ENABLED, false)
@@ -2136,6 +2142,27 @@ object QuizRepository {
     }
 
     fun hasCustomBackgroundImage(context: Context): Boolean = customBackgroundImageFile(context) != null
+
+    /** 拖动滑杆过程中：只更新 Compose 状态，绝不落盘（否则每帧 persist）。 */
+    fun updateCustomBackgroundScrimPreview(percent: Int) {
+        customBackgroundScrim = percent.coerceIn(0, 100)
+    }
+
+    /** 松手后落盘当前浓度（onValueChangeFinished 调用）。 */
+    fun commitCustomBackgroundScrim(context: Context) {
+        appContext = context.applicationContext
+        persist()
+    }
+
+    /** 未设置过时的主题默认浓度（保持老观感：深 55 / 浅 32）。 */
+    fun customBackgroundDefaultScrimPercent(): Int = if (darkThemeEnabled) 55 else 32
+
+    /** 实际使用的蒙层浓度 0f..1f：设过就用用户的，否则跟随主题默认。 */
+    fun customBackgroundScrimAlpha(): Float {
+        val stored = customBackgroundScrim
+        val percent = if (stored >= 0) stored else customBackgroundDefaultScrimPercent()
+        return percent.coerceIn(0, 100) / 100f
+    }
 
     fun setCustomBackgroundEnabled(context: Context, enabled: Boolean) {
         appContext = context.applicationContext
@@ -4702,6 +4729,7 @@ object QuizRepository {
         indexedBankTypeCounts.clear()
         customBackgroundEnabled = false
         customBackgroundVersion = 0
+        customBackgroundScrim = -1
         resetPracticeState()
         initialized = false
         appContext = null
@@ -5847,6 +5875,7 @@ object QuizRepository {
             .putBoolean(KEY_DARK_THEME_ENABLED, darkThemeEnabled)
             .putBoolean(KEY_CUSTOM_BACKGROUND_ENABLED, customBackgroundEnabled)
             .putInt(KEY_CUSTOM_BACKGROUND_VERSION, customBackgroundVersion)
+            .putInt(KEY_CUSTOM_BACKGROUND_SCRIM, customBackgroundScrim)
             .putBoolean(KEY_CARD_ANIMATION_ENABLED, cardAnimationEnabled)
             .putBoolean(KEY_SHIROHA_MODE_ENABLED, shirohaModeEnabled)
             .putBoolean(KEY_TABLET_SIDE_NAVIGATION_ENABLED, tabletSideNavigationEnabled)

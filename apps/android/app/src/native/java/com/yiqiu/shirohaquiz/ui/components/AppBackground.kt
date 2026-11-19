@@ -49,8 +49,8 @@ fun AppBackground(modifier: Modifier = Modifier) {
             modifier = Modifier.fillMaxSize(),
             contentScale = ContentScale.Crop
         )
-        // 固定蒙层保证文字可读；深色主题压得更重。
-        val scrimAlpha = if (QuizRepository.darkThemeEnabled) 0.55f else 0.32f
+        // 固定蒙层保证文字可读；浓度可调（未设置时跟随主题默认），只影响重组不影响解码。
+        val scrimAlpha = QuizRepository.customBackgroundScrimAlpha()
         Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = scrimAlpha)))
     }
 }

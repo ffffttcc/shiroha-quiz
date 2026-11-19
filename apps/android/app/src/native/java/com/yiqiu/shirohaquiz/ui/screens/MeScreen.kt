@@ -42,6 +42,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -596,6 +597,37 @@ fun AppearancePreferenceScreen(
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
+                Spacer(Modifier.height(10.dp))
+                val scrimPercent = QuizRepository.customBackgroundScrim
+                    .takeIf { it >= 0 } ?: QuizRepository.customBackgroundDefaultScrimPercent()
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "背景蒙层",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                    Spacer(Modifier.weight(1f))
+                    Text(
+                        text = "$scrimPercent%",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Slider(
+                    value = scrimPercent.toFloat(),
+                    onValueChange = { value ->
+                        // 拖动中只更新 Compose 状态：绝不 persist（否则每帧落盘）。
+                        QuizRepository.updateCustomBackgroundScrimPreview(value.toInt())
+                    },
+                    onValueChangeFinished = {
+                        QuizRepository.commitCustomBackgroundScrim(context)
+                    },
+                    valueRange = 0f..100f,
+                    steps = 19
+                )
             }
             Spacer(Modifier.height(12.dp))
             PreferenceSwitchRow(
