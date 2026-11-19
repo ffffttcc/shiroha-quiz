@@ -218,6 +218,7 @@ fun DataManagementScreen(
     val context = LocalContext.current
     var statusText by remember { mutableStateOf<String?>(null) }
     var pendingExportBytes by remember { mutableStateOf<ByteArray?>(null) }
+    val exportScope = rememberCoroutineScope()
     var showBankExportDialog by remember { mutableStateOf(false) }
     var showClearDialog by remember { mutableStateOf(false) }
     var selectedBankIds by remember { mutableStateOf(QuizRepository.banks.map { it.id }.toSet()) }
@@ -302,8 +303,12 @@ fun DataManagementScreen(
                     desc = "完整备份",
                     modifier = Modifier.weight(1f),
                     onClick = {
-                        pendingExportBytes = QuizRepository.exportFullBackupZip()
-                        createDocumentLauncher.launch("shiroha_full_backup_${backupTimeStamp()}.zip")
+                        statusText = "正在打包全部备份…"
+                        exportScope.launch {
+                            val bytes = QuizRepository.exportFullBackupZipAsync()
+                            pendingExportBytes = bytes
+                            createDocumentLauncher.launch("shiroha_full_backup_${backupTimeStamp()}.zip")
+                        }
                     }
                 )
                 DataActionTile(
@@ -337,8 +342,13 @@ fun DataManagementScreen(
                 if (selectedBankIds.isEmpty()) {
                     statusText = "请至少选择一个题库。"
                 } else {
-                    pendingExportBytes = QuizRepository.exportBanksBackupZip(selectedBankIds)
-                    createDocumentLauncher.launch("shiroha_selected_banks_${backupTimeStamp()}.zip")
+                    statusText = "正在打包所选题库…"
+                    val idsToExport = selectedBankIds.toSet()
+                    exportScope.launch {
+                        val bytes = QuizRepository.exportBanksBackupZipAsync(idsToExport)
+                        pendingExportBytes = bytes
+                        createDocumentLauncher.launch("shiroha_selected_banks_${backupTimeStamp()}.zip")
+                    }
                 }
                 showBankExportDialog = false
             }

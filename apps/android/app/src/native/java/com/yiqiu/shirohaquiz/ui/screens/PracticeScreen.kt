@@ -138,6 +138,8 @@ fun PracticeScreen(
     onOpenQuickEdit: () -> Unit = {}
 ) {
     val context = LocalContext.current
+    // 进入练习页就预热本范围的题库（IO 线程），避免点「开始」时在主线程解析。
+    LaunchedEffect(Unit) { QuizRepository.preloadPracticeScopeBanks() }
     val practiceScopeKey = QuizRepository.currentPracticeScopeKey()
     val practiceScopeLabel = QuizRepository.currentPracticeScopeLabel()
     val practiceScopeSummary = QuizRepository.currentPracticeScopeSummary()

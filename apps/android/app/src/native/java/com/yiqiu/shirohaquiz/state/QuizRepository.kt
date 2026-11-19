@@ -2859,6 +2859,20 @@ object QuizRepository {
         )
     }
 
+    /** 全量备份导出：解析与序列化都在 IO 线程，调用方须在协程里调用（UI/WebDAV 用这个）。 */
+    suspend fun exportFullBackupZipAsync(): ByteArray =
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { exportFullBackupZip() }
+
+    /** 所选题库导出：同上，整段在 IO。 */
+    suspend fun exportBanksBackupZipAsync(bankIds: Set<String>): ByteArray =
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { exportBanksBackupZip(bankIds) }
+
+    /** 覆盖恢复：整段（全量解析、安全备份、落盘）在 IO 线程执行，避免主线程 ANR。 */
+    suspend fun replaceContentFromBackupBytesAsync(bytes: ByteArray): String =
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            replaceContentFromBackupBytes(bytes)
+        }
+
     fun exportFullBackupZip(): ByteArray {
         loadAllBanksBlocking()
         return buildBackupZip(
@@ -5911,6 +5925,17 @@ object QuizRepository {
         return kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
             loadBankFromStorage(context, bankId)
         }
+    }
+
+    /** 练习/考试开始前，在 IO 线程解析本次范围（通常 1 个库），主线程只做占位替换。 */
+    suspend fun preloadPracticeScopeBanks() {
+        val ids = currentPracticeScopeBanks().map { it.id }.filter { unloadedBankIds.contains(it) }
+        if (ids.isEmpty()) return
+        val context = appContext ?: return
+        val loaded = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            ids.mapNotNull { id -> loadBankFromStorage(context, id)?.let { id to it } }
+        }
+        loaded.forEach { (id, bank) -> replacePlaceholderBank(id, bank) }
     }
 
     /** 该库题目体是否尚未解析（UI 用来显示加载态）。 */

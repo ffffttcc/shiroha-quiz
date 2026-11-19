@@ -138,9 +138,8 @@ class WebDavBackupManager private constructor(
         val file = newCacheFile("zip")
         var metadataFile: File? = null
         try {
-            // QuizRepository is Main-owned. Its existing exporter returns bytes; only this
-            // boundary is buffered. Hashing and all network upload/download are streamed on IO.
-            val bytes = withContext(Dispatchers.Main.immediate) {
+            // 导出会全量解析题库（18 MB 级）：必须在 IO 上做，绝不能占主线程（P1 ANR 教训）。
+            val bytes = withContext(Dispatchers.IO) {
                 work.cancellation.throwIfCancelled()
                 hooks.exportFullBackupZip?.invoke() ?: QuizRepository.exportFullBackupZip()
             }
@@ -240,7 +239,8 @@ class WebDavBackupManager private constructor(
             }
             try {
                 val bytes = withContext(Dispatchers.IO) { readVerifiedBytes(file, prepared.entry, work.cancellation) }
-                val result = withContext(Dispatchers.Main.immediate) {
+                // 恢复同样要全量解析 + 生成安全备份：只能在 IO 上跑；快照写入本身是线程安全的。
+                val result = withContext(Dispatchers.IO) {
                     synchronized(this@WebDavBackupManager) {
                         work.cancellation.throwIfCancelled()
                         // Once mutation begins it cannot safely be interrupted or replayed.

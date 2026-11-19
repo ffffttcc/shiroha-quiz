@@ -103,6 +103,8 @@ fun ExamScreen(
     onOpenRecord: (String) -> Unit
 ) {
     val context = LocalContext.current
+    // 进入考试页就预热本范围的题库（IO 线程），避免点「开始」时在主线程解析。
+    LaunchedEffect(Unit) { QuizRepository.preloadPracticeScopeBanks() }
     val examScopeKey = QuizRepository.currentPracticeScopeKey()
     val examScopeLabel = QuizRepository.currentPracticeScopeLabel()
     val examScopeQuestions = QuizRepository.activePracticePoolQuestions()
