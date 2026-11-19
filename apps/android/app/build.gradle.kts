@@ -34,6 +34,14 @@ android {
     }
 
     signingConfigs {
+        // 固定 debug keystore（仅 debug 用途，公开口令 android）：让每次 CI 构建签名一致，
+        // 后续 pm install -r 可直接覆盖升级，不必卸载清数据。与发布密钥无关。
+        getByName("debug") {
+            storeFile = file("debug.keystore")
+            storePassword = "android"
+            keyAlias = "androiddebugkey"
+            keyPassword = "android"
+        }
         create("release") {
             val props = Properties()
             val propsFile = rootProject.file("keystore.properties")
@@ -48,6 +56,9 @@ android {
     }
 
     buildTypes {
+        debug {
+            signingConfig = signingConfigs.getByName("debug")
+        }
         release {
             signingConfig = signingConfigs.getByName("release")
             isMinifyEnabled = true
