@@ -135,7 +135,8 @@ import kotlin.math.abs
 fun PracticeScreen(
     onGoExam: () -> Unit = {},
     onOpenRecords: () -> Unit = {},
-    onOpenQuickEdit: () -> Unit = {}
+    onOpenQuickEdit: () -> Unit = {},
+    onOpenChapterPractice: () -> Unit = {}
 ) {
     val context = LocalContext.current
     // 进入练习页就预热本范围的题库（IO 线程），避免点「开始」时在主线程解析。
@@ -443,6 +444,7 @@ fun PracticeScreen(
 
             if (!isPracticeRunning) {
                 CompactPracticeSetupHero()
+                ChapterPracticeEntryCard(onClick = onOpenChapterPractice)
             }
         }
 

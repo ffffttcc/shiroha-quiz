@@ -67,6 +67,7 @@ import com.yiqiu.shirohaquiz.ui.screens.AiSettingsScreen
 import com.yiqiu.shirohaquiz.ui.screens.BankDetailScreen
 import com.yiqiu.shirohaquiz.ui.screens.BankListScreen
 import com.yiqiu.shirohaquiz.ui.screens.BankReviewScreen
+import com.yiqiu.shirohaquiz.ui.screens.ChapterPracticeScreen
 import com.yiqiu.shirohaquiz.ui.screens.DataManagementScreen
 import com.yiqiu.shirohaquiz.ui.screens.DocumentRecognitionScreen
 import com.yiqiu.shirohaquiz.ui.screens.WebDavBackupScreen
@@ -114,6 +115,7 @@ private enum class MainTab(
     AppearancePreference("外观偏好", Icons.Rounded.Settings, showInBottomBar = false),
     PracticePreference("刷题偏好", Icons.Rounded.School, showInBottomBar = false),
     PracticeQuickEdit("快速编辑", Icons.Rounded.School, showInBottomBar = false),
+    ChapterPractice("章节练习", Icons.Rounded.School, showInBottomBar = false),
     WrongBookPreference("错题本设置", Icons.Rounded.School, showInBottomBar = false),
     AiSettings("AI 设置", Icons.Rounded.Settings, showInBottomBar = false),
     DocumentRecognition("文档识别", Icons.Rounded.ImportExport, showInBottomBar = false),
@@ -140,6 +142,7 @@ private fun MainTab.fallbackBackTarget(): MainTab? = when (this) {
     MainTab.BankReview -> MainTab.BankDetail
     MainTab.RecordDetail -> MainTab.Records
     MainTab.PracticeQuickEdit -> MainTab.Practice
+    MainTab.ChapterPractice -> MainTab.Practice
     MainTab.CloudBackup -> MainTab.DataManagement
     MainTab.AppearancePreference,
     MainTab.PracticePreference,
@@ -363,7 +366,12 @@ fun ShirohaAppShell() {
                         MainTab.Practice -> PracticeScreen(
                             onGoExam = { navigateTo(MainTab.Exam) },
                             onOpenRecords = { navigateTo(MainTab.Records) },
-                            onOpenQuickEdit = { navigateTo(MainTab.PracticeQuickEdit) }
+                            onOpenQuickEdit = { navigateTo(MainTab.PracticeQuickEdit) },
+                            onOpenChapterPractice = { navigateTo(MainTab.ChapterPractice) }
+                        )
+                        MainTab.ChapterPractice -> ChapterPracticeScreen(
+                            onBack = { navigateBack() },
+                            onStarted = { navigateRoot(MainTab.Practice) }
                         )
                         MainTab.PracticeQuickEdit -> PracticeQuickEditScreen(
                             onBack = { navigateBack() }
