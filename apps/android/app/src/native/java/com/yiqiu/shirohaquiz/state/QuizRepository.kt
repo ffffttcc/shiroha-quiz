@@ -4998,21 +4998,28 @@ object QuizRepository {
         return if (cleanQuestion == blankSanitized.question) blankSanitized else blankSanitized.copy(question = cleanQuestion)
     }
 
+    // Compiled once per JVM: sanitize runs per question (5k+ questions at import/migration), so these
+    // must never be rebuilt inside the per-question path.
+    private val embeddedAnswerBracketRegex = Regex(
+        """[（(]\s*([A-Ha-h]{1,8}|正确|错误|对|错|是|否|√|×|True|False)\s*[）)]""",
+        RegexOption.IGNORE_CASE
+    )
+    private val spaceBeforePunctuationRegex = Regex("""\s+([?？。；;，,])""")
+    private val whitespaceRunRegex = Regex("""\s+""")
+    private val objectiveKeyRegex = Regex("""^[A-H]{1,8}$""")
+
     private fun stripEmbeddedAnswerBracket(stem: String, answer: List<String>): String {
         if (stem.isBlank() || answer.isEmpty()) return stem
         val expected = answer.flatMap(::answerToObjectiveKeys).filter { it.isNotBlank() }.sorted()
         if (expected.isEmpty()) return stem
 
-        val match = Regex(
-            """[（(]\s*([A-Ha-h]{1,8}|正确|错误|对|错|是|否|√|×|True|False)\s*[）)]""",
-            RegexOption.IGNORE_CASE
-        ).findAll(stem).toList().asReversed().firstOrNull { hit ->
+        val match = embeddedAnswerBracketRegex.findAll(stem).toList().asReversed().firstOrNull { hit ->
             embeddedAnswerToKeys(hit.groupValues[1]) == expected
         } ?: return stem
 
         return stem.removeRange(match.range)
-            .replace(Regex("""\s+([?？。；;，,])"""), "$1")
-            .replace(Regex("""\s+"""), " ")
+            .replace(spaceBeforePunctuationRegex, "$1")
+            .replace(whitespaceRunRegex, " ")
             .trim()
             .trimEnd('，', ',', '；', ';', ':', '：')
             .trim()
@@ -5025,7 +5032,7 @@ object QuizRepository {
     private fun answerToObjectiveKeys(raw: String): List<String> {
         val value = raw.trim().uppercase()
         return when {
-            value.matches(Regex("""^[A-H]{1,8}$""")) -> value.map { it.toString() }.distinct().sorted()
+            value.matches(objectiveKeyRegex) -> value.map { it.toString() }.distinct().sorted()
             value in listOf("正确", "对", "是", "√", "TRUE", "T") -> listOf("A")
             value in listOf("错误", "错", "否", "×", "X", "FALSE", "F") -> listOf("B")
             else -> emptyList()
