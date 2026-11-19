@@ -83,6 +83,7 @@ import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import kotlin.math.roundToInt
 
 @Composable
 fun MeScreen(
@@ -598,35 +599,40 @@ fun AppearancePreferenceScreen(
                     )
                 }
                 Spacer(Modifier.height(10.dp))
-                val scrimPercent = QuizRepository.customBackgroundScrim
-                    .takeIf { it >= 0 } ?: QuizRepository.customBackgroundDefaultScrimPercent()
+                // 无极调节：steps = 0，取连续 Float。100% = 实心（与今天一致），0% = 只剩文字浮在背景图上。
+                val surfaceAlphaPercent = QuizRepository.contentSurfaceAlphaFactor() * 100f
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = "背景蒙层",
+                        text = "界面不透明度",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurface
                     )
                     Spacer(Modifier.weight(1f))
                     Text(
-                        text = "$scrimPercent%",
+                        text = "${surfaceAlphaPercent.roundToInt()}%",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
                 Slider(
-                    value = scrimPercent.toFloat(),
+                    value = surfaceAlphaPercent,
                     onValueChange = { value ->
                         // 拖动中只更新 Compose 状态：绝不 persist（否则每帧落盘）。
-                        QuizRepository.updateCustomBackgroundScrimPreview(value.toInt())
+                        QuizRepository.updateContentSurfaceAlphaPreview(value / 100f)
                     },
                     onValueChangeFinished = {
-                        QuizRepository.commitCustomBackgroundScrim(context)
+                        QuizRepository.commitContentSurfaceAlpha(context)
                     },
                     valueRange = 0f..100f,
-                    steps = 19
+                    steps = 0
+                )
+                Text(
+                    text = "只影响卡片、选项、面板和底栏的底色；文字始终不透明。",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
             Spacer(Modifier.height(12.dp))

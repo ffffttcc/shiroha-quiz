@@ -92,6 +92,7 @@ import com.yiqiu.shirohaquiz.ui.theme.ShirohaColors
 import com.yiqiu.shirohaquiz.ui.theme.ShirohaDimens
 import com.yiqiu.shirohaquiz.ui.theme.ShirohaMotion
 import com.yiqiu.shirohaquiz.ui.theme.ShirohaRadius
+import com.yiqiu.shirohaquiz.ui.theme.shirohaSurface
 
 private val ShirohaPageEaseOut = CubicBezierEasing(0.22f, 1f, 0.36f, 1f)
 
@@ -279,7 +280,7 @@ fun ShirohaAppShell() {
                             modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
                             onOpen = { navigateTo(MainTab.CloudBackup) })
                         BottomAppBar(
-                            containerColor = ShirohaColors.BottomBar,
+                            containerColor = shirohaSurface(ShirohaColors.BottomBar),
                             tonalElevation = 0.dp
                         ) {
                             Row(
@@ -514,7 +515,7 @@ private fun ShirohaSideNavigation(
         modifier = Modifier
             .width(88.dp)
             .fillMaxHeight(),
-        containerColor = ShirohaColors.BottomBar
+        containerColor = shirohaSurface(ShirohaColors.BottomBar)
     ) {
         Spacer(modifier = Modifier.height(16.dp))
         MainTab.entries.filter { it.showInBottomBar }.forEach { tab ->
