@@ -308,7 +308,7 @@ private fun FavoriteScopeDialog(
                         val key = FAVORITE_SCOPE_BANK_PREFIX + bank.id
                         FavoriteScopeOption(
                             title = bank.name,
-                            desc = "收藏 ${favoriteCountByBank[bank.id] ?: 0} 题 · 共 ${bank.questions.size} 题",
+                            desc = "收藏 ${favoriteCountByBank[bank.id] ?: 0} 题 · 共 ${QuizRepository.bankQuestionCount(bank.id)} 题",
                             selected = selectedScopeKey == key,
                             onClick = { onSelect(key) }
                         )

@@ -246,7 +246,7 @@ fun BankListScreen(
             val groupName = entry.key
             val banksInGroup = entry.value
             val isExpanded = groupName !in collapsedGroups
-            val totalQuestions = banksInGroup.sumOf { it.questions.size }
+            val totalQuestions = banksInGroup.sumOf { QuizRepository.bankQuestionCount(it.id) }
 
             GlassCard {
                 Row(
@@ -353,10 +353,12 @@ private fun BankCard(
     onMove: () -> Unit,
     onDelete: () -> Unit
 ) {
-    val singleCount = bank.questions.count { it.type == QuestionType.SINGLE }
-    val multipleCount = bank.questions.count { it.type == QuestionType.MULTIPLE }
-    val judgeCount = bank.questions.count { it.type == QuestionType.JUDGE }
-    val subjectiveCount = bank.questions.count { it.type == QuestionType.BLANK || it.type == QuestionType.SHORT }
+    // 题目体可能尚未从磁盘解析：题数/题型分布读索引，避免为了显示而加载整库。
+    val bankTypeCounts = QuizRepository.bankTypeCounts(bank.id)
+    val singleCount = bankTypeCounts[QuestionType.SINGLE] ?: 0
+    val multipleCount = bankTypeCounts[QuestionType.MULTIPLE] ?: 0
+    val judgeCount = bankTypeCounts[QuestionType.JUDGE] ?: 0
+    val subjectiveCount = bankTypeCounts[QuestionType.SHORT] ?: 0
     var moreMenuExpanded by remember { mutableStateOf(false) }
 
     Surface(
@@ -372,7 +374,7 @@ private fun BankCard(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                StatusChip("${bank.questions.size} 题", selected = true)
+                StatusChip("${QuizRepository.bankQuestionCount(bank.id)} 题", selected = true)
                 if (isPracticeScope) {
                     Spacer(Modifier.width(6.dp))
                     StatusChip("练习范围", selected = true)

@@ -687,7 +687,6 @@ object QuizRepository {
         // when no persist() ran above. Keep the previous "first persist after init rewrites content"
         // behaviour: mark everything now, let the next persist() flush it.
         markAllContentDirty()
-        if (useBankIndex) scheduleBankHydration(context)
     }
 
     fun importBank(
@@ -908,7 +907,8 @@ object QuizRepository {
 
     fun replaceBankQuestions(context: Context, bankId: String, questions: List<Question>): Boolean {
         appContext = context.applicationContext
-        ensureAllBanksLoaded()
+        // 组进度需要组内题数：只补全该库所在分组，不碰其它库。
+        ensureBanksLoaded(groupBankIdsOf(banks.firstOrNull { it.id == bankId }?.groupName))
         val bankIndex = banks.indexOfFirst { it.id == bankId }
         if (bankIndex < 0) return false
 
@@ -1045,8 +1045,14 @@ object QuizRepository {
     }
 
     fun activePracticePoolSources(bank: QuizBank? = null): List<PracticeQuestionSource> {
-        ensureAllBanksLoaded()
-        val scopeBanks = bank?.let(::listOf) ?: currentPracticeScopeBanks()
+        // 只解析本次练习范围内的库（通常 1 个），绝不触发全量加载。
+        if (bank != null) {
+            ensureBanksLoaded(listOf(bank.id))
+        } else {
+            ensureBanksLoaded(currentPracticeScopeBanks().map { it.id })
+        }
+        val scopeBanks = bank?.let { selected -> listOfNotNull(banks.firstOrNull { it.id == selected.id }) }
+            ?: currentPracticeScopeBanks()
         return scopeBanks.flatMap { sourceBank ->
             sourceBank.questions
                 .filterNot { isQuestionSlashed(sourceBank.id, it) }
@@ -2540,7 +2546,6 @@ object QuizRepository {
 
 
     fun startExam(questionCount: Int, durationMinutes: Int): Boolean {
-        ensureAllBanksLoaded()
         return startExam(
             questionCount = questionCount,
             durationMinutes = durationMinutes,
@@ -2855,7 +2860,7 @@ object QuizRepository {
     }
 
     fun exportFullBackupZip(): ByteArray {
-        ensureAllBanksLoaded()
+        loadAllBanksBlocking()
         return buildBackupZip(
             kind = "shiroha_quiz_full_backup",
             selectedBanks = banks,
@@ -2872,7 +2877,7 @@ object QuizRepository {
     /** Call on the repository's owning (UI) thread, with no concurrent content edits. */
     fun replaceContentFromBackupBytes(bytes: ByteArray): String {
         val context = appContext ?: return "恢复失败：原生仓库尚未初始化。"
-        ensureAllBanksLoaded()
+        loadAllBanksBlocking()
         val incoming = runCatching { readValidatedBackup(bytes) }
             .getOrElse { return "恢复失败：${it.message ?: "备份不安全或数据损坏"}。" }
         val previous = currentBackupContent()
@@ -4608,6 +4613,7 @@ object QuizRepository {
         dirtyBankIds.clear()
         unloadedBankIds.clear()
         indexedBankQuestionCounts.clear()
+        indexedBankTypeCounts.clear()
         resetPracticeState()
         initialized = false
         appContext = null
@@ -5356,8 +5362,8 @@ object QuizRepository {
     }
 
     private fun clampGroupSequentialProgress(groupName: String) {
-        // 组内题数需要真实题目体（占位库 questions 为空会算小），先补全。
-        ensureAllBanksLoaded()
+        // 组内题数需要真实题目体（占位库 questions 为空会算小）：只补全该分组。
+        ensureBanksLoaded(groupBankIdsOf(groupName))
         val cleanGroup = normalizeBankGroupName(groupName)
         val key = "GROUP:$cleanGroup"
         val total = banks
@@ -5793,11 +5799,6 @@ object QuizRepository {
     }
     // ---- 惰性加载：索引占位 + 后台逐库补全 ----
 
-    private val bankHydrationExecutor: java.util.concurrent.ExecutorService =
-        java.util.concurrent.Executors.newSingleThreadExecutor { runnable ->
-            Thread(runnable, "bank-hydration").apply { isDaemon = true }
-        }
-
     /** 仍是索引占位对象（题目体未解析）的库 id。占位对象永远不许写盘。 */
     private val unloadedBankIds: MutableSet<String> =
         java.util.Collections.synchronizedSet(mutableSetOf<String>())
@@ -5805,6 +5806,10 @@ object QuizRepository {
     /** 索引里的题数；占位库以它为准（内存占位对象 questions 为空）。 */
     private val indexedBankQuestionCounts: MutableMap<String, Int> =
         java.util.Collections.synchronizedMap(mutableMapOf<String, Int>())
+
+    /** 索引里的题型分布，供列表/详情在题目体未解析时显示。 */
+    private val indexedBankTypeCounts: MutableMap<String, Map<QuestionType, Int>> =
+        java.util.Collections.synchronizedMap(mutableMapOf<String, Map<QuestionType, Int>>())
 
     private fun readStoredBankIndex(prefs: SharedPreferences): List<QuizBank>? {
         val raw = prefs.getString(KEY_BANK_INDEX, null)
@@ -5817,6 +5822,14 @@ object QuizRepository {
             if (id.isBlank()) continue
             val questionCount = item.optInt("questionCount", 0)
             indexedBankQuestionCounts[id] = questionCount
+            item.optJSONObject("typeCounts")?.let { counts ->
+                indexedBankTypeCounts[id] = mapOf(
+                    QuestionType.SINGLE to counts.optInt("single", 0),
+                    QuestionType.MULTIPLE to counts.optInt("multiple", 0),
+                    QuestionType.JUDGE to counts.optInt("judge", 0),
+                    QuestionType.SHORT to counts.optInt("subjective", 0)
+                )
+            }
             if (questionCount > 0) unloadedBankIds.add(id)
             restored.add(
                 QuizBank(
@@ -5854,22 +5867,87 @@ object QuizRepository {
         return true
     }
 
-    private fun scheduleBankHydration(context: Context) {
-        val pending = unloadedBankIds.toList()
-        if (pending.isEmpty()) return
-        bankHydrationExecutor.execute {
-            pending.forEach { bankId ->
-                if (!unloadedBankIds.contains(bankId)) return@forEach
-                val loaded = loadBankFromStorage(context, bankId) ?: return@forEach
-                Snapshot.withMutableSnapshot {
-                    if (appContext != context) return@withMutableSnapshot
-                    replacePlaceholderBank(bankId, loaded)
-                }
-            }
+    private fun groupBankIdsOf(groupName: String?): List<String> {
+        val cleanGroup = normalizeBankGroupName(groupName ?: DEFAULT_BANK_GROUP_NAME)
+        return banks.filter { normalizeBankGroupName(it.groupName) == cleanGroup }.map { it.id }
+    }
+
+    /** 按 id 补全题目体：只解析传入的库，缓存命中（已加载）直接返回。 */
+    private fun ensureBanksLoaded(bankIds: Collection<String>) {
+        if (unloadedBankIds.isEmpty()) return
+        val context = appContext ?: return
+        bankIds.filter { unloadedBankIds.contains(it) }.forEach { bankId ->
+            val loaded = loadBankFromStorage(context, bankId) ?: return@forEach
+            replacePlaceholderBank(bankId, loaded)
         }
     }
 
-    /** 同步补全单个库（改名/改题/练习等需要题目体的入口先调用）。 */
+    /** 仅阻塞式导出/恢复（以及调用它们的单测）使用；生产入口必须走 suspend 版本。 */
+    private fun loadAllBanksBlocking() {
+        ensureBanksLoaded(unloadedBankIds.toList())
+    }
+
+    /** UI 进入某库时在 IO 线程解析该库；主线程只做占位替换。 */
+    suspend fun preloadBankContent(bankId: String) {
+        if (bankId.isBlank() || !unloadedBankIds.contains(bankId)) return
+        val context = appContext ?: return
+        val loaded = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            loadBankFromStorage(context, bankId)
+        } ?: return
+        replacePlaceholderBank(bankId, loaded)
+    }
+
+    /** 尚未解析题目体的库 id 快照（搜索等按需读取场景用）。 */
+    fun pendingBankContentIds(): List<String> = unloadedBankIds.toList()
+
+    /**
+     * 读取单个库的题目体但不驻留内存（搜索用）：已加载的库直接返回内存对象，
+     * 未加载的在 IO 线程解析后返回，不替换占位对象，避免为搜索把全部题库灌进内存。
+     */
+    suspend fun readBankContentForSearch(bankId: String): QuizBank? {
+        if (bankId.isBlank()) return null
+        if (!unloadedBankIds.contains(bankId)) return banks.firstOrNull { it.id == bankId }
+        val context = appContext ?: return null
+        return kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            loadBankFromStorage(context, bankId)
+        }
+    }
+
+    /** 该库题目体是否尚未解析（UI 用来显示加载态）。 */
+    fun isBankContentPending(bankId: String): Boolean = unloadedBankIds.contains(bankId)
+
+    /** 题目数：未加载的库以索引为准，绝不为此解析题目体。 */
+    fun bankQuestionCount(bankId: String): Int {
+        val bank = banks.firstOrNull { it.id == bankId } ?: return 0
+        return if (unloadedBankIds.contains(bankId)) {
+            indexedBankQuestionCounts[bankId] ?: bank.questions.size
+        } else {
+            bank.questions.size
+        }
+    }
+
+    /** 题型分布（SINGLE/MULTIPLE/JUDGE/SHORT，主观题并入 SHORT）：未加载的库读索引。 */
+    fun bankTypeCounts(bankId: String): Map<QuestionType, Int> {
+        if (!unloadedBankIds.contains(bankId)) {
+            val questions = banks.firstOrNull { it.id == bankId }?.questions.orEmpty()
+            return mapOf(
+                QuestionType.SINGLE to questions.count { it.type == QuestionType.SINGLE },
+                QuestionType.MULTIPLE to questions.count { it.type == QuestionType.MULTIPLE },
+                QuestionType.JUDGE to questions.count { it.type == QuestionType.JUDGE },
+                QuestionType.SHORT to questions.count { it.type == QuestionType.BLANK || it.type == QuestionType.SHORT }
+            )
+        }
+        return indexedBankTypeCounts[bankId]?.let { counts ->
+            mapOf(
+                QuestionType.SINGLE to (counts[QuestionType.SINGLE] ?: 0),
+                QuestionType.MULTIPLE to (counts[QuestionType.MULTIPLE] ?: 0),
+                QuestionType.JUDGE to (counts[QuestionType.JUDGE] ?: 0),
+                QuestionType.SHORT to (counts[QuestionType.SHORT] ?: 0)
+            )
+        }.orEmpty()
+    }
+
+    /** 同步补全单个库（改名/改题等单库入口；调用前该库通常已由 preloadBankContent 载入）。 */
     private fun ensureBankLoaded(bankId: String) {
         if (bankId.isBlank() || !unloadedBankIds.contains(bankId)) return
         val context = appContext ?: return
@@ -5878,16 +5956,6 @@ object QuizRepository {
     }
 
     /** 同步补全全部库（导出/恢复/练习池等需要全量题目体的入口先调用）。 */
-    private fun ensureAllBanksLoaded() {
-        val pending = unloadedBankIds.toList()
-        if (pending.isEmpty()) return
-        val context = appContext ?: return
-        pending.forEach { bankId ->
-            val loaded = loadBankFromStorage(context, bankId) ?: return@forEach
-            replacePlaceholderBank(bankId, loaded)
-        }
-    }
-
     // ---- 题库分文件存储（见 docs/存储根治-设计.md）----
 
     private fun bankStorageDir(context: Context): File = File(context.filesDir, BANK_STORAGE_DIR_NAME)
@@ -5921,11 +5989,32 @@ object QuizRepository {
                             bank.questions.size
                         }
                     )
+                    .put("typeCounts", bankTypeCountsJson(bank))
                     .put("file", bankStorageSafeId(bank.id) + ".json")
                     .put("version", System.currentTimeMillis())
             )
         }
         return array.toString()
+    }
+
+    private fun bankTypeCountsJson(bank: QuizBank): JSONObject {
+        val counts = if (unloadedBankIds.contains(bank.id)) {
+            indexedBankTypeCounts[bank.id].orEmpty()
+        } else {
+            mapOf(
+                QuestionType.SINGLE to bank.questions.count { it.type == QuestionType.SINGLE },
+                QuestionType.MULTIPLE to bank.questions.count { it.type == QuestionType.MULTIPLE },
+                QuestionType.JUDGE to bank.questions.count { it.type == QuestionType.JUDGE },
+                QuestionType.SHORT to bank.questions.count {
+                    it.type == QuestionType.BLANK || it.type == QuestionType.SHORT
+                }
+            )
+        }
+        return JSONObject()
+            .put("single", counts[QuestionType.SINGLE] ?: 0)
+            .put("multiple", counts[QuestionType.MULTIPLE] ?: 0)
+            .put("judge", counts[QuestionType.JUDGE] ?: 0)
+            .put("subjective", counts[QuestionType.SHORT] ?: 0)
     }
 
     private fun writeBankStorageFile(context: Context, bank: QuizBank) {

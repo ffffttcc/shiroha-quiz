@@ -27,6 +27,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -80,12 +81,33 @@ fun QuestionSearchScreen(
 
     val scope = selectedScopeKey.toSearchScope(activeBank?.id)
     val scopeLabel = selectedScopeKey.scopeLabel(banks, activeBank)
-    val results = QuestionSearchEngine.search(
+    // 题目体按需从磁盘读：未加载的库在 IO 线程逐个解析、用完即弃，不驻留内存。
+    val pendingBankIdList = QuizRepository.pendingBankContentIds()
+    var pendingResults by remember { mutableStateOf<List<QuestionSearchResult>>(emptyList()) }
+    LaunchedEffect(query, selectedScopeKey, pendingBankIdList) {
+        if (query.isBlank()) {
+            pendingResults = emptyList()
+            return@LaunchedEffect
+        }
+        val collected = mutableListOf<QuestionSearchResult>()
+        pendingBankIdList.forEach { bankId ->
+            val bank = QuizRepository.readBankContentForSearch(bankId) ?: return@forEach
+            collected += QuestionSearchEngine.search(
+                banks = listOf(bank),
+                activeBankId = activeBank?.id,
+                query = query,
+                scope = scope
+            )
+        }
+        pendingResults = collected
+    }
+    val loadedResults = QuestionSearchEngine.search(
         banks = banks,
         activeBankId = activeBank?.id,
         query = query,
         scope = scope
     )
+    val results = loadedResults + pendingResults
 
     if (showScopeDialog) {
         SearchScopeDialog(

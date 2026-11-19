@@ -25,6 +25,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -67,6 +68,10 @@ fun BankDetailScreen(
     onOpenReview: () -> Unit
 ) {
     val context = LocalContext.current
+    // 进入详情页时在 IO 线程解析该库，主线程只做占位替换。
+    LaunchedEffect(bankId) {
+        bankId?.let { QuizRepository.preloadBankContent(it) }
+    }
     val bank = if (bankId == null) {
         QuizRepository.activeBank()
     } else {
@@ -165,7 +170,7 @@ fun BankDetailScreen(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                StatusChip("${bank.questions.size} 题", selected = true)
+                StatusChip("${QuizRepository.bankQuestionCount(bank.id)} 题", selected = true)
                 StatusChip(bank.groupName.ifBlank { DEFAULT_BANK_GROUP_NAME }, selected = false)
                 StatusChip(if (isActive) "活动题库" else "可切换题库", selected = isActive)
                 Spacer(Modifier.weight(1f))
@@ -176,7 +181,10 @@ fun BankDetailScreen(
             }
             Spacer(Modifier.height(14.dp))
             Text(
-                text = "单选 ${bank.questions.count { it.type == QuestionType.SINGLE }} · 多选 ${bank.questions.count { it.type == QuestionType.MULTIPLE }} · 判断 ${bank.questions.count { it.type == QuestionType.JUDGE }} · 主观 ${bank.questions.count { it.type == QuestionType.BLANK || it.type == QuestionType.SHORT }}",
+                text = run {
+                    val counts = QuizRepository.bankTypeCounts(bank.id)
+                    "单选 ${counts[QuestionType.SINGLE] ?: 0} · 多选 ${counts[QuestionType.MULTIPLE] ?: 0} · 判断 ${counts[QuestionType.JUDGE] ?: 0} · 主观 ${counts[QuestionType.SHORT] ?: 0}"
+                },
                 style = MaterialTheme.typography.bodyLarge,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -231,12 +239,20 @@ fun BankDetailScreen(
             Spacer(Modifier.height(12.dp))
             NoticeCard("这里只显示前 5 题。点击“二次核对”可进入完整沉浸核对页，逐题查看和修改整份题库。", warning = false)
             Spacer(Modifier.height(12.dp))
-            bank.questions.take(5).forEach { question ->
-                QuestionPreviewBlock(
-                    question = question,
-                    editable = false,
-                    onEdit = {}
+            if (QuizRepository.isBankContentPending(bank.id)) {
+                Text(
+                    text = "正在从本地存储加载题目…",
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
+            } else {
+                bank.questions.take(5).forEach { question ->
+                    QuestionPreviewBlock(
+                        question = question,
+                        editable = false,
+                        onEdit = {}
+                    )
+                }
             }
         }
 

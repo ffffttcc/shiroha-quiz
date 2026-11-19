@@ -39,6 +39,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -86,6 +87,9 @@ fun BankReviewScreen(
     onBack: () -> Unit
 ) {
     val context = LocalContext.current
+    LaunchedEffect(bankId) {
+        bankId?.let { QuizRepository.preloadBankContent(it) }
+    }
     val bank = QuizRepository.banks.firstOrNull { it.id == bankId } ?: QuizRepository.activeBank()
 
     if (bank == null) {
@@ -115,7 +119,25 @@ fun BankReviewScreen(
         return
     }
 
-    val editableQuestions = remember(bank.id) { bank.questions.toMutableStateList() }
+    if (QuizRepository.isBankContentPending(bank.id)) {
+        Column(
+            modifier = Modifier
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = ShirohaSpacing.Xl, vertical = ShirohaSpacing.Sm),
+            verticalArrangement = Arrangement.spacedBy(ShirohaSpacing.Lg)
+        ) {
+            ShirohaHeader(
+                kicker = "Review",
+                title = "题库核对",
+                subtitle = "正在从本地存储加载题库…"
+            )
+            Text(text = "题目正在解析，完成后会自动显示。", style = MaterialTheme.typography.bodyLarge)
+        }
+        return
+    }
+
+    // 题目体是异步解析的：key 里带上 questions，加载完成后重建可编辑列表。
+    val editableQuestions = remember(bank.id, bank.questions) { bank.questions.toMutableStateList() }
     var currentIndex by rememberSaveable(bank.id) { mutableStateOf(0) }
     var filterName by rememberSaveable(bank.id) { mutableStateOf(BankReviewFilter.ALL.name) }
     var query by rememberSaveable(bank.id) { mutableStateOf("") }
