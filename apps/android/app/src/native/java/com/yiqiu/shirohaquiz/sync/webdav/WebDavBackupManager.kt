@@ -97,7 +97,24 @@ class WebDavBackupManager private constructor(
             },
             renameLocalBank = { bankId, newName -> QuizRepository.renameBank(appContext, bankId, newName) }
         )
-        engine.run()
+        try {
+            engine.run().also { report ->
+                // 失败必须落盘到 last_error：否则「上次失败」行在最常见的手动同步场景下永远不亮。
+                // 写入的是引擎给出的原文（如「远端 WebDAV 资源不存在。」），不做泛化改写。
+                if (!report.ok) store.recordFailure(report.message)
+            }
+        } catch (error: Exception) {
+            // 异常同样不吞：原文落盘，并把原文作为本轮结果返回，UI 照原句显示。
+            val detail = "${error::class.java.simpleName}: ${error.message}"
+            store.recordFailure(detail)
+            com.yiqiu.shirohaquiz.sync.sync.SyncEngine.Report(
+                ok = false,
+                uploaded = 0,
+                downloaded = 0,
+                conflicts = 0,
+                message = detail
+            )
+        }
     }
 
     @Synchronized fun hasRecoveryCode(): Boolean = recoveryCodes.existing() != null

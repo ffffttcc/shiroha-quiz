@@ -1,6 +1,11 @@
 package com.yiqiu.shirohaquiz.sync.webdav
 
+import com.yiqiu.shirohaquiz.sync.sync.SyncStateStore
 import kotlinx.coroutines.*
+import okhttp3.Call
+import okhttp3.Protocol
+import okhttp3.Response
+import okhttp3.ResponseBody.Companion.toResponseBody
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.setMain
@@ -103,6 +108,35 @@ class WebDavBackupManagerTest {
         try {
             manager.saveSettings(WebDavSettings("https://dav.example.com/dav/", "user"), "password")
             withTimeout(20_000) { test(manager, counters) }
+        } finally { manager.cancelCurrentTask(); scope.cancel(); Dispatchers.resetMain() }
+    }
+
+    /**
+     * 手动「立即同步」失败必须落盘：否则 UI 的「上次失败」行在最常见的手动同步场景下永远不亮。
+     * 落盘内容必须是引擎/异常原文，不许泛化成「同步失败」这类话。
+     */
+    @Test fun syncNowFailureWritesOriginalErrorToState() = runBlocking {
+        Dispatchers.setMain(Dispatchers.Unconfined)
+        val context = RuntimeEnvironment.getApplication()
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined)
+        val failing = Call.Factory { request ->
+            Response.Builder().request(request).protocol(Protocol.HTTP_1_1)
+                .code(404).message("test").body(ByteArray(0).toResponseBody()).build()
+        }
+        val manager = WebDavBackupManager.createForTesting(context,
+            WebDavBackupHooks(exportFullBackupZip = { "native-backup-fixture".toByteArray() }),
+            WebDavSettingsStore(context),
+            clientFactory = { settings, credentials -> WebDavClient(settings.baseUrl, settings.remoteDirectory,
+                credentials, callFactory = failing, xmlParserFactory = { org.kxml2.io.KXmlParser() }) },
+            scope = scope)
+        try {
+            manager.saveSettings(WebDavSettings("https://dav.example.com/dav/", "user"), "password")
+            val state = SyncStateStore(context)
+            val beforeAt = state.lastErrorAt()
+            val report = manager.syncNow()
+            assertFalse("远端 404 时必须报失败", report.ok)
+            assertEquals("last_error 必须是原文，不许泛化", report.message, state.lastError())
+            assertTrue("last_error_at 必须被写入", state.lastErrorAt() > beforeAt)
         } finally { manager.cancelCurrentTask(); scope.cancel(); Dispatchers.resetMain() }
     }
 }
