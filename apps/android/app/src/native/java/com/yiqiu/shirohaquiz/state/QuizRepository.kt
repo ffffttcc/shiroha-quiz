@@ -454,6 +454,78 @@ object QuizRepository {
     private var initialized by mutableStateOf(false)
     private var appContext: Context? = null
 
+    /** 事件存储（追加式日志）；首次使用时才建，并顺手跑一次老数据迁移。 */
+    private var recordEventStore: com.yiqiu.shirohaquiz.sync.records.RecordEventStore? = null
+
+    private fun syncRecordStore(): com.yiqiu.shirohaquiz.sync.records.RecordEventStore? {
+        val context = appContext ?: return null
+        recordEventStore?.let { return it }
+        val store = com.yiqiu.shirohaquiz.sync.records.RecordEventStore.forContext(context)
+        // 老数据迁移：把现有累计量记成 legacyBaseline（不伪造事件），只跑一次。
+        runCatching {
+            val entries = wrongBook.associate { entry ->
+                val key = com.yiqiu.shirohaquiz.sync.records.RecordKey.of(
+                    entry.question.type.name,
+                    entry.question.question,
+                    entry.question.options.map { it.text },
+                    entry.question.answer
+                )
+                key to com.yiqiu.shirohaquiz.sync.records.LegacyBaseline(entry.wrongCount, entry.rightCount)
+            }
+            store.migrateLegacyOnce(entries)
+        }
+        recordEventStore = store
+        return store
+    }
+
+    /**
+     * 过渡期双写：作答事件 + 旧累计字段。
+     *
+     * 顺序是硬约束——**先写事件（append + fsync），再推进旧字段**。事件写失败就直接抛，
+     * 调用方因此不会推进 `wrongCount/rightCount`：宁可这次少算，也不能丢掉作答记录。
+     * UI 改造完成后，旧字段降级为「派生缓存」，只剩事件是真相。
+     */
+    private fun recordAnswerEvent(bank: QuizBank?, question: Question, correct: Boolean, source: String) {
+        val store = syncRecordStore() ?: return
+        store.append(
+            questionKey = com.yiqiu.shirohaquiz.sync.records.RecordKey.of(
+                question.type.name,
+                question.question,
+                question.options.map { it.text },
+                question.answer
+            ),
+            bankHint = com.yiqiu.shirohaquiz.sync.sync.SyncIdentity.identityKey(
+                bank?.groupName,
+                bank?.name ?: "未命名题库"
+            ),
+            correct = correct,
+            source = source
+        )
+    }
+
+    /**
+     * 收藏/错题本的存在态变更必须留 tombstone：只把条目从列表里删掉是不够的——
+     * 别的设备看到远端还有这条，下一轮就会把它拉回来（删除复活）。
+     * `deleted=false` 表示重新加入，epoch 递增即合法复活。
+     */
+    private fun recordStateTombstone(
+        kind: com.yiqiu.shirohaquiz.sync.records.RecordKind,
+        question: Question,
+        deleted: Boolean
+    ) {
+        val store = syncRecordStore() ?: return
+        store.appendTombstone(
+            kind = kind,
+            targetKey = com.yiqiu.shirohaquiz.sync.records.RecordKey.of(
+                question.type.name,
+                question.question,
+                question.options.map { it.text },
+                question.answer
+            ),
+            deleted = deleted
+        )
+    }
+
     var examQuestions by mutableStateOf<List<Question>>(emptyList())
         private set
     var examIndex by mutableStateOf(0)
@@ -1634,6 +1706,12 @@ object QuizRepository {
     }
 
     fun removeWrongQuestion(entry: WrongQuestionEntry) {
+        // 手动移出错题本要留 tombstone，否则同步时会被别的设备拉回来。
+        recordStateTombstone(
+            com.yiqiu.shirohaquiz.sync.records.RecordKind.WRONG,
+            entry.question,
+            deleted = true
+        )
         wrongBook.removeAll { it.bankId == entry.bankId && it.question.id == entry.question.id }
         markContentDirty(KEY_WRONG_BOOK)
         persist()
@@ -1819,11 +1897,22 @@ object QuizRepository {
             )
         }
         markContentDirty(KEY_FAVORITE_QUESTIONS)
+        // 收藏/取消都要留状态 tombstone（取消 = deleted，重新收藏 = 复活）。
+        recordStateTombstone(
+            com.yiqiu.shirohaquiz.sync.records.RecordKind.FAVORITE,
+            question,
+            deleted = index >= 0
+        )
         persist()
         return true
     }
 
     fun removeFavoriteQuestion(entry: FavoriteQuestionEntry) {
+        recordStateTombstone(
+            com.yiqiu.shirohaquiz.sync.records.RecordKind.FAVORITE,
+            entry.question,
+            deleted = true
+        )
         favoriteQuestions.removeAll { it.bankId == entry.bankId && it.question.id == entry.question.id }
         markContentDirty(KEY_FAVORITE_QUESTIONS)
         persist()
@@ -5490,6 +5579,8 @@ object QuizRepository {
         userAnswer: List<String>,
         source: String
     ) {
+        // 双写：答错事件先落盘，再推进错题本的累计字段。
+        recordAnswerEvent(bank, question, correct = false, source = source)
         val bankId = bank?.id ?: return
         val bankName = bank.name
         val now = System.currentTimeMillis()
@@ -5561,6 +5652,8 @@ object QuizRepository {
     }
 
     private fun markWrongQuestionRight(bank: QuizBank?, question: Question) {
+        // 双写：答对也落事件。放在早退之前——不在错题本里的题答对了同样要记（旧字段覆盖不到）。
+        recordAnswerEvent(bank, question, correct = true, source = "review")
         val bankId = bank?.id ?: return
         val index = wrongBook.indexOfFirst { it.bankId == bankId && it.question.id == question.id }
         if (index < 0) return
