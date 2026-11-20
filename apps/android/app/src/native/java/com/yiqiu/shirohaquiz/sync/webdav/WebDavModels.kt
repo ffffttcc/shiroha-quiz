@@ -204,8 +204,8 @@ internal object WebDavPaths {
 
     fun baseUrl(raw: String): HttpUrl {
         val text = raw.trim()
-        require(text.startsWith("https://", true)) { "WebDAV 仅支持 HTTPS 地址。"
-        }
+        // TEST-ONLY（临时联调分支）：允许 http，正式主线仍是仅 https。
+        require(text.startsWith("https://", true) || text.startsWith("http://", true)) { "WebDAV 仅支持 HTTPS 地址。" }
         val uri = runCatching { java.net.URI(text) }.getOrNull()
             ?: throw IllegalArgumentException("WebDAV 地址无效。")
         require(uri.rawUserInfo == null && uri.rawQuery == null && uri.rawFragment == null)

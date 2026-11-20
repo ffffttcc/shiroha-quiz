@@ -49,7 +49,8 @@ class WebDavSettingsStore(context: Context, private val secrets: SecureSecretSto
 
     @Synchronized fun credentials(): WebDavCredentials {
         val settings = load().validated()
-        val password = loadPassword() ?: throw WebDavException("请填写 WebDAV 密码或应用专用授权码。")
+        // TEST-ONLY（临时联调分支）：未存密码时用占位口令，便于无 UI 联调。
+        val password = loadPassword() ?: "test-only"
         return WebDavCredentials(settings.username, password)
     }
 
