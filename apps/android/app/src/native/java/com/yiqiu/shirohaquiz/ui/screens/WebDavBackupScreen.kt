@@ -243,7 +243,7 @@ fun WebDavBackupScreen(onBack: () -> Unit) {
             }
             Text("上次同步 $syncStamp · ${lastSyncResult ?: "无记录"}",
                 style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            // 失败原因原样露出（截断但不改写），后台同步失败时用户能直接看到卡在哪。
+            // 失败原因原样露出（截断但不改写）。失败晚于上次成功才算「当前失败」，否则标为历史失败，避免红字压着成功记录误导。
             val errorText = lastError
             if (!errorText.isNullOrBlank()) {
                 val errorStamp = if (lastErrorAt > 0) {
@@ -251,8 +251,13 @@ fun WebDavBackupScreen(onBack: () -> Unit) {
                 } else {
                     "时间未知"
                 }
-                Text("上次失败：${truncateForDisplay(errorText)} · $errorStamp",
-                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+                val errorIsCurrent = lastErrorAt > lastSyncAt
+                Text(
+                    if (errorIsCurrent) "上次失败：${truncateForDisplay(errorText)} · $errorStamp"
+                    else "历史失败（此后已同步成功）：${truncateForDisplay(errorText)} · $errorStamp",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (errorIsCurrent) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant
+                )
             }
             if (localConflictCopies.isNotEmpty()) {
                 Text("冲突副本（已保留为本地题库）：${localConflictCopies.joinToString("、")}",
