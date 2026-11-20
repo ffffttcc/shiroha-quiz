@@ -199,7 +199,7 @@ internal object WebDavPaths {
     private val filePattern = Regex("[A-Za-z0-9][A-Za-z0-9._-]{0,239}")
     private val shaPattern = Regex("[a-fA-F0-9]{64}")
     private val generatedPattern = Regex(
-        "shiroha-quiz-backup-(\\d{8}-\\d{9})-([a-f0-9]{32})-(android|web)-v([A-Za-z0-9._-]+)-sha256-([a-f0-9]{64})\\.(zip|json)"
+        "shiroha-quiz-backup-(\\d{8}-\\d{9})-([a-f0-9]{32})-(android|web)-v([A-Za-z0-9._-]+)-sha256-([a-f0-9]{64})\\.(zip|json)(\\.enc)?"
     )
 
     fun baseUrl(raw: String): HttpUrl {
@@ -234,10 +234,16 @@ internal object WebDavPaths {
         return name
     }
 
+    /** 密文备份在正常文件名后多一个 .enc；识别时先剥掉它再判断内容类型。 */
+    const val ENCRYPTED_SUFFIX = ".enc"
+
+    fun isEncryptedName(name: String): Boolean = name.endsWith(ENCRYPTED_SUFFIX)
+
     fun isBackup(name: String): Boolean = runCatching {
         safeFileName(name)
+        val contentName = name.removeSuffix(ENCRYPTED_SUFFIX)
         name.startsWith("shiroha-quiz-backup-") &&
-            (name.endsWith(".zip") || name.endsWith(".json")) &&
+            (contentName.endsWith(".zip") || contentName.endsWith(".json")) &&
             !name.endsWith(".meta.json") && !name.contains(".uploading") && !name.contains(".tmp")
     }.getOrDefault(false)
 
@@ -254,11 +260,12 @@ internal object WebDavPaths {
         }
     }
 
-    fun newBackupName(createdAt: Long, version: String, sha256: String): String {
+    fun newBackupName(createdAt: Long, version: String, sha256: String, encrypted: Boolean = false): String {
         require(isSha256(sha256))
         val stamp = formatter().format(Date(createdAt))
         val safeVersion = version.replace(Regex("[^A-Za-z0-9_-]"), "_").take(32).ifEmpty { "unknown" }
-        return safeFileName("shiroha-quiz-backup-$stamp-${UUID.randomUUID().toString().replace("-", "")}-android-v$safeVersion-sha256-${sha256.lowercase(Locale.ROOT)}.zip")
+        val base = "shiroha-quiz-backup-$stamp-${UUID.randomUUID().toString().replace("-", "")}-android-v$safeVersion-sha256-${sha256.lowercase(Locale.ROOT)}.zip"
+        return safeFileName(if (encrypted) base + ENCRYPTED_SUFFIX else base)
     }
 
     /** Immutable names retain basic metadata even if the optional sidecar is missing/corrupt. */
@@ -270,8 +277,8 @@ internal object WebDavPaths {
                 ?: resource.modifiedAt,
             sizeBytes = resource.sizeBytes ?: -1,
             source = match?.groupValues?.get(3) ?: when {
-                resource.fileName.endsWith("-android.zip") -> "android"
-                resource.fileName.endsWith("-web.zip") -> "web"
+                resource.fileName.endsWith("-android.zip") || resource.fileName.endsWith("-android.zip.enc") -> "android"
+                resource.fileName.endsWith("-web.zip") || resource.fileName.endsWith("-web.zip.enc") -> "web"
                 else -> "unknown"
             },
             appVersion = match?.groupValues?.get(4) ?: "unknown",
@@ -281,6 +288,14 @@ internal object WebDavPaths {
     }
 
     fun digestHex(digest: ByteArray): String = digest.joinToString("") { "%02x".format(it.toInt() and 255) }
+
+    /** 供解密时把文件名里的 SHA256 还原成 AAD 需要的原始字节。 */
+    fun hexToBytes(hex: String): ByteArray {
+        require(hex.length % 2 == 0 && shaPattern.matches(hex)) { "校验值格式无效。" }
+        return ByteArray(hex.length / 2) { index ->
+            hex.substring(index * 2, index * 2 + 2).toInt(16).toByte()
+        }
+    }
     fun equalSha256(a: String, b: String): Boolean = MessageDigest.isEqual(
         a.lowercase(Locale.ROOT).toByteArray(Charsets.US_ASCII),
         b.lowercase(Locale.ROOT).toByteArray(Charsets.US_ASCII)

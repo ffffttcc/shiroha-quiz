@@ -23,10 +23,13 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
+import com.yiqiu.shirohaquiz.security.BackupEncryption
 import com.yiqiu.shirohaquiz.sync.webdav.*
 import com.yiqiu.shirohaquiz.ui.components.GlassCard
 import com.yiqiu.shirohaquiz.ui.components.NoticeCard
@@ -60,6 +63,9 @@ fun WebDavBackupScreen(onBack: () -> Unit) {
     var restoreMode by remember { mutableStateOf(WebDavRestoreMode.IMPORT_COPY) }
     var confirmOverwrite by remember { mutableStateOf(false) }
     var saveFileName by remember { mutableStateOf("shiroha_cloud_backup.zip") }
+    var encryptionEnabled by remember { mutableStateOf(manager.isEncryptionEnabled()) }
+    var recoveryCode by remember { mutableStateOf<String?>(null) }
+    val clipboard = LocalClipboardManager.current
     val busy = task?.stage == WebDavTaskStage.RUNNING || task?.stage == WebDavTaskStage.CANCELLING
     val saveDownload = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/octet-stream")) { uri ->
         val source = downloaded
@@ -152,6 +158,34 @@ fun WebDavBackupScreen(onBack: () -> Unit) {
             }
         }
         GlassCard {
+            Text("备份加密", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
+            Text("开启后，备份包在本机加密再上传，服务端只存密文；旧的不加密备份仍可正常下载和恢复。",
+                style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Checkbox(encryptionEnabled, { checked ->
+                    if (manager.setEncryptionEnabled(checked)) {
+                        encryptionEnabled = checked
+                        message = if (checked) "之后上传的备份会先加密再传。" else "之后上传的备份将不再加密。"
+                    } else {
+                        message = "当前任务尚未结束，请稍后再试。"
+                    }
+                }, enabled = !busy)
+                Text("备份加密（服务端只存密文）", style = MaterialTheme.typography.bodyMedium)
+            }
+            TextButton(enabled = !busy, onClick = {
+                scope.launch {
+                    recoveryCode = try {
+                        manager.recoveryCode()
+                    } catch (error: Exception) {
+                        message = "读取恢复码失败：${error.message}"
+                        null
+                    }
+                }
+            }) { Text(if (manager.hasRecoveryCode()) "查看恢复码" else "生成恢复码") }
+            Text("恢复码丢失后，已加密上传的云端备份将永久无法解密，也无法找回。",
+                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+        }
+        GlassCard {
             Text("云端备份 · ${entries.size} 份", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
             if (entries.isEmpty()) Text("点击刷新读取远程备份。首次使用时，请先测试连接并创建备份目录。")
             entries.forEach { entry ->
@@ -173,6 +207,30 @@ fun WebDavBackupScreen(onBack: () -> Unit) {
         }
         key(settings) { WebDavAutoBackupCard(enabled = !busy) }
         TextButton(onClick = onBack) { Text("返回数据管理") }
+    }
+    recoveryCode?.let { code ->
+        AlertDialog(
+            onDismissRequest = { recoveryCode = null },
+            title = { Text("备份恢复码") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("请立刻抄写或复制保存，不要只存在本机。")
+                    Text(BackupEncryption.formatRecoveryCode(code),
+                        style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                    Text("恢复码只保存在本机的安全存储里，不会上传、也不会写进备份。一旦丢失，" +
+                        "服务端上的加密备份将永久无法解密，我们也无法帮你找回。",
+                        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    clipboard.setText(AnnotatedString(BackupEncryption.formatRecoveryCode(code)))
+                    message = "恢复码已复制到剪贴板。"
+                    recoveryCode = null
+                }) { Text("复制恢复码") }
+            },
+            dismissButton = { TextButton(onClick = { recoveryCode = null }) { Text("关闭") } }
+        )
     }
     prepared?.let { value ->
         if (!confirmOverwrite) AlertDialog(onDismissRequest = { manager.discardPreparedRestore() }, title = { Text("确认恢复方式") },

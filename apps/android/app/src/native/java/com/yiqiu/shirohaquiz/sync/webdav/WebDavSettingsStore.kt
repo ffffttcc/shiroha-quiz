@@ -60,10 +60,17 @@ class WebDavSettingsStore(context: Context, private val secrets: SecureSecretSto
         }
     }
 
+    /** 备份加密开关：只决定"下一次上传要不要加密"，不改已存在的云端备份。 */
+    @Synchronized fun isEncryptionEnabled(): Boolean = preferences.getBoolean(ENCRYPTION_ENABLED_KEY, false)
+
+    @Synchronized fun setEncryptionEnabled(enabled: Boolean): Boolean =
+        preferences.edit().putBoolean(ENCRYPTION_ENABLED_KEY, enabled).commit()
+
     @Synchronized fun forgetSessionPassword() { sessionPassword = null }
 
     companion object {
         // Independent logical secret; the parent owns any SecureSecretStore Keystore-alias change.
         const val PASSWORD_SECRET_KEY = "webdav_password"
+        const val ENCRYPTION_ENABLED_KEY = "backup_encryption_enabled"
     }
 }
