@@ -3,7 +3,6 @@ package com.yiqiu.shirohaquiz.state
 import android.content.Context
 import org.junit.After
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -83,10 +82,12 @@ class ContentSurfaceAlphaTest {
     fun committedAlphaSurvivesReload() {
         QuizRepository.setCustomBackgroundEnabled(context, true)
         QuizRepository.updateContentSurfaceAlphaPreview(0.42f)
-        // 拖动阶段只改内存：commit 之前 prefs 里不该有值。
-        assertFalse(preferences.contains("content_surface_alpha"))
+        // setCustomBackgroundEnabled 会 persist 一次，此时键存在但值仍是哨兵 -1f；
+        // 拖动阶段只改内存，所以 commit 之前 prefs 里必须还是 -1f。
+        assertEquals(-1f, preferences.getFloat("content_surface_alpha", -2f), 0.0001f)
 
         QuizRepository.commitContentSurfaceAlpha(context)
+        assertEquals(0.42f, preferences.getFloat("content_surface_alpha", -2f), 0.0001f)
         QuizRepository.resetForTesting()
         QuizRepository.init(context)
 
