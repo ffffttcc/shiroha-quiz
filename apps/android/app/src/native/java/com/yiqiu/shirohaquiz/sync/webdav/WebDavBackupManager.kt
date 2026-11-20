@@ -1,6 +1,7 @@
 package com.yiqiu.shirohaquiz.sync.webdav
 
 import android.content.Context
+import android.util.Log
 import com.yiqiu.shirohaquiz.BuildConfig
 import com.yiqiu.shirohaquiz.security.BackupDecryptException
 import com.yiqiu.shirohaquiz.security.BackupEncryption
@@ -466,7 +467,13 @@ class WebDavBackupManager private constructor(
             } catch (error: WebDavException) {
                 failure = error
                 finish(work, WebDavTaskStage.FAILED, error.message ?: "WebDAV 操作失败。")
-            } catch (_: Exception) {
+            } catch (error: Exception) {
+                // 观测性：UI 仍只看到笼统文案（原设计不动），但真因必须落到日志与 last_error。
+                Log.e("WebDavTask", "WebDAV task failed", error)
+                runCatching {
+                    com.yiqiu.shirohaquiz.sync.sync.SyncStateStore(appContext)
+                        .recordFailure("${error::class.java.simpleName}: ${error.message}")
+                }
                 failure = WebDavException("WebDAV 操作失败，请检查配置、备份内容和可用存储空间。")
                 // Never surface arbitrary hook/keystore/network exception messages or secrets.
                 finish(work, WebDavTaskStage.FAILED, "WebDAV 操作失败，请检查配置、备份内容和可用存储空间。")

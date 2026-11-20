@@ -1,6 +1,7 @@
 package com.yiqiu.shirohaquiz.sync.webdav
 
 import com.yiqiu.shirohaquiz.BuildConfig
+import android.util.Log
 
 import android.content.Context
 import android.net.ConnectivityManager
@@ -85,7 +86,15 @@ class WebDavAutoBackupWorker(context: Context, params: WorkerParameters) : Corou
         } catch (cancelled: CancellationException) { throw cancelled }
         catch (error: WebDavException) {
             return if (runAttemptCount >= 3 || error.httpCode in listOf(401, 403, 405, 507)) Result.failure() else Result.retry()
-        } catch (_: Exception) { return if (runAttemptCount >= 3) Result.failure() else Result.retry() }
+        } catch (error: Exception) {
+            // 观测性：分支走向不变，只把真因落日志与 last_error。
+            Log.e("WebDavTask", "WebDavAutoBackupWorker failed", error)
+            runCatching {
+                com.yiqiu.shirohaquiz.sync.sync.SyncStateStore(applicationContext)
+                    .recordFailure("${error::class.java.simpleName}: ${error.message}")
+            }
+            return if (runAttemptCount >= 3) Result.failure() else Result.retry()
+        }
     }
 
     private suspend fun awaitTask(manager: WebDavBackupManager, start: () -> Boolean): Boolean {
