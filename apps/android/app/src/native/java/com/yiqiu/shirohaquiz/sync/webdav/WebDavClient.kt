@@ -196,6 +196,57 @@ class WebDavClient(
         }
     }
 
+    // ===== 同步对象：只认 shiroha-sync- 前缀，扁平存放、不建子目录 =====
+    // 现有 download()/deleteBackup() 的 isBackup 校验一行不动：同步走自己的收口，
+    // 不去放松备份那条路（MKCOL 仍只允许用户显式动作）。
+
+    fun listSyncObjects(cancellation: WebDavCancellation = WebDavCancellation()): List<WebDavResource> =
+        list(cancellation).filter { !it.isDirectory && SyncObjects.isSyncObject(it.fileName) }
+
+    fun getSyncObject(fileName: String, cancellation: WebDavCancellation = WebDavCancellation()): ByteArray? {
+        requireSyncObjectName(fileName)
+        return withResponse(request(fileUrl(fileName), "GET"), cancellation) { response ->
+            if (response.code == 404) {
+                null
+            } else {
+                if (response.code != 200) failHttp(response.code)
+                boundedBytes(response, MAX_SYNC_OBJECT_BYTES, cancellation)
+            }
+        }
+    }
+
+    fun putSyncObject(
+        fileName: String,
+        bytes: ByteArray,
+        cancellation: WebDavCancellation = WebDavCancellation()
+    ) {
+        requireSyncObjectName(fileName)
+        require(bytes.isNotEmpty() && bytes.size.toLong() <= MAX_SYNC_OBJECT_BYTES) {
+            "同步对象为空或超过大小限制。"
+        }
+        withResponse(request(fileUrl(fileName), "PUT", bytes.toRequestBody(BINARY)), cancellation) { response ->
+            if (response.code != 200 && response.code != 201 && response.code != 204) failHttp(response.code)
+        }
+    }
+
+    fun deleteSyncObject(fileName: String, cancellation: WebDavCancellation = WebDavCancellation()): Boolean {
+        requireSyncObjectName(fileName)
+        val resource = statFile(fileName, cancellation) ?: return false
+        if (resource.isDirectory) throw WebDavException("不允许删除远端目录。")
+        withResponse(
+            request(fileUrl(fileName), "DELETE").newBuilder().header("Depth", "0").build(),
+            cancellation
+        ) { response ->
+            if (response.code != 200 && response.code != 204 && response.code != 404) failHttp(response.code)
+        }
+        return true
+    }
+
+    private fun requireSyncObjectName(fileName: String) {
+        WebDavPaths.safeFileName(fileName)
+        require(SyncObjects.isSyncObject(fileName)) { "不是同步对象文件名。" }
+    }
+
     /** Used only for bounded sidecar/index data, never for backup file bodies. */
     fun readMetadata(fileName: String, cancellation: WebDavCancellation = WebDavCancellation()): ByteArray? {
         require(fileName == "manifest.json" || (fileName.startsWith("shiroha-quiz-backup-") && fileName.endsWith(".meta.json")))
@@ -521,6 +572,8 @@ class WebDavClient(
     companion object {
         const val DEFAULT_MAX_BACKUP_BYTES = 150L * 1024 * 1024
         private const val MAX_METADATA_BYTES = 2L * 1024 * 1024
+        /** 单库题目 JSON 可能远超 sidecar 上限，同步对象单独给一个上限。 */
+        private const val MAX_SYNC_OBJECT_BYTES = 32L * 1024 * 1024
         private const val MAX_REDIRECTS = 5
         private const val DAV = "DAV:"
         private val BINARY = "application/octet-stream".toMediaType()

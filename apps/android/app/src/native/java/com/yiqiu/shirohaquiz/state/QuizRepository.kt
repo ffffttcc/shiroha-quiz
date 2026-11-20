@@ -4184,6 +4184,44 @@ object QuizRepository {
      *
      * 返回 (备份内的 bankId → 本地 bankId, 新增的库, 被覆盖的库)。
      */
+    /** 同步落库：按身份键（groupName|name）就地覆盖并**保留本地 bankId**，否则新增；不改 activeBankId。 */
+    fun applySyncedBank(
+        context: Context,
+        groupName: String,
+        name: String,
+        questions: List<com.yiqiu.shirohaquiz.importer.model.Question>
+    ): Boolean {
+        appContext = context.applicationContext
+        val cleanGroupName = normalizeBankGroupName(groupName)
+        val cleanName = name.trim().ifBlank { return false }
+        val existing = banks.firstOrNull {
+            normalizeBankGroupName(it.groupName) == cleanGroupName && it.name == cleanName
+        }
+        return if (existing != null) {
+            val index = banks.indexOfFirst { it.id == existing.id }
+            if (index < 0) return false
+            banks[index] = existing.copy(questions = questions)
+            markBankDirty(existing.id)
+            markContentDirty(KEY_BANKS)
+            persist()
+            true
+        } else {
+            val created = sanitizeBank(
+                QuizBank(
+                    id = "bank_${System.currentTimeMillis()}_sync",
+                    name = uniqueBankNameInGroup(cleanName, cleanGroupName),
+                    questions = questions,
+                    groupName = cleanGroupName
+                )
+            )
+            banks += created
+            markBankDirty(created.id)
+            markContentDirty(KEY_BANKS)
+            persist()
+            true
+        }
+    }
+
     internal fun applyImportedBankMerge(
         importedBanks: List<QuizBank>,
         now: Long
