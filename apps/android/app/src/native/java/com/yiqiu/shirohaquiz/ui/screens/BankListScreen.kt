@@ -80,7 +80,11 @@ fun BankListScreen(
     var moveTarget by remember { mutableStateOf<QuizBank?>(null) }
     var moveGroupText by remember { mutableStateOf(DEFAULT_BANK_GROUP_NAME) }
     var deleteTarget by remember { mutableStateOf<QuizBank?>(null) }
-    var collapsedGroups by rememberSaveable { mutableStateOf<List<String>>(emptyList()) }
+    // 分组默认收起；仅当前题库所在分组默认展开（当前题库取不到则全部收起）
+    val activeBankGroup = activeBank?.groupName?.ifBlank { DEFAULT_BANK_GROUP_NAME }
+    var expandedGroups by rememberSaveable {
+        mutableStateOf(activeBankGroup?.let { listOf(it) } ?: emptyList())
+    }
 
     if (editTarget != null) {
         AlertDialog(
@@ -253,7 +257,7 @@ fun BankListScreen(
         groupedBanks.forEach { entry ->
             val groupName = entry.key
             val banksInGroup = entry.value
-            val isExpanded = groupName !in collapsedGroups
+            val isExpanded = groupName in expandedGroups
             val totalQuestions = banksInGroup.sumOf { QuizRepository.bankQuestionCount(it.id) }
 
             item(key = "g:$groupName") {
@@ -266,10 +270,10 @@ fun BankListScreen(
                             modifier = Modifier
                                 .weight(1f)
                                 .shirohaNoRippleClickable {
-                                    collapsedGroups = if (isExpanded) {
-                                        (collapsedGroups + groupName).distinct()
+                                    expandedGroups = if (isExpanded) {
+                                        expandedGroups - groupName
                                     } else {
-                                        collapsedGroups - groupName
+                                        (expandedGroups + groupName).distinct()
                                     }
                                 },
                             verticalAlignment = Alignment.CenterVertically
