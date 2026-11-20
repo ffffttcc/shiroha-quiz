@@ -7,7 +7,16 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
 import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
 
+/**
+ * manifest 编解码用 org.json，而纯 JVM 单测里 android.jar 的 JSONObject 是桩
+ * （调用直接抛 RuntimeException("Stub!")），所以这里走 Robolectric。
+ */
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [28])
 class SyncManifestTest {
     private val code = "ABCDEFGH23456789ABCDEFGH23456789"
 
