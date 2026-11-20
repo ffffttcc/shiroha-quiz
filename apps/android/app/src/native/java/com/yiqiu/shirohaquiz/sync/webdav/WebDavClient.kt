@@ -1,5 +1,6 @@
 package com.yiqiu.shirohaquiz.sync.webdav
 
+import com.yiqiu.shirohaquiz.sync.sync.SyncObjects
 import okhttp3.Authenticator
 import okhttp3.Call
 import okhttp3.Credentials
