@@ -30,6 +30,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import com.yiqiu.shirohaquiz.security.BackupEncryption
+import com.yiqiu.shirohaquiz.state.QuizRepository
 import com.yiqiu.shirohaquiz.sync.sync.SyncScheduler
 import com.yiqiu.shirohaquiz.sync.sync.SyncStateStore
 import com.yiqiu.shirohaquiz.sync.webdav.*
@@ -43,6 +44,13 @@ import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+
+/** 冲突副本的命名标记，与 SyncIdentity 的副本命名保持一致；只用于展示，不参与同步判定。 */
+private const val CONFLICT_COPY_MARK = "（冲突副本"
+
+/** 失败原因可能很长（异常消息+堆栈首行），截断以免撑破布局，但保留开头原文不改写。 */
+private fun truncateForDisplay(text: String, maxChars: Int = 120): String =
+    if (text.length <= maxChars) text else text.take(maxChars) + "…"
 
 @Composable
 fun WebDavBackupScreen(onBack: () -> Unit) {
@@ -71,6 +79,10 @@ fun WebDavBackupScreen(onBack: () -> Unit) {
     var syncWifiOnly by remember { mutableStateOf(syncStore.wifiOnly()) }
     var lastSyncAt by remember { mutableStateOf(syncStore.lastSyncAt()) }
     var lastSyncResult by remember { mutableStateOf(syncStore.lastSyncResult()) }
+    var lastError by remember { mutableStateOf(syncStore.lastError()) }
+    var lastErrorAt by remember { mutableStateOf(syncStore.lastErrorAt()) }
+    // 冲突副本被引擎落成普通本地题库（名字带「（冲突副本 …）」），读题库列表就能列名字，不需要引擎暴露。
+    val localConflictCopies = QuizRepository.banks.map { it.name }.filter { it.contains(CONFLICT_COPY_MARK) }
     var encryptionEnabled by remember { mutableStateOf(manager.isEncryptionEnabled()) }
     var recoveryCode by remember { mutableStateOf<String?>(null) }
     val clipboard = LocalClipboardManager.current
@@ -231,14 +243,37 @@ fun WebDavBackupScreen(onBack: () -> Unit) {
             }
             Text("上次同步 $syncStamp · ${lastSyncResult ?: "无记录"}",
                 style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            // 失败原因原样露出（截断但不改写），后台同步失败时用户能直接看到卡在哪。
+            val errorText = lastError
+            if (!errorText.isNullOrBlank()) {
+                val errorStamp = if (lastErrorAt > 0) {
+                    SimpleDateFormat("MM-dd HH:mm", Locale.CHINA).format(Date(lastErrorAt))
+                } else {
+                    "时间未知"
+                }
+                Text("上次失败：${truncateForDisplay(errorText)} · $errorStamp",
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+            }
+            if (localConflictCopies.isNotEmpty()) {
+                Text("冲突副本（已保留为本地题库）：${localConflictCopies.joinToString("、")}",
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
             TextButton(enabled = !busy, onClick = {
                 scope.launch {
                     message = "正在同步…"
                     val report = manager.syncNow()
                     lastSyncAt = syncStore.lastSyncAt()
                     lastSyncResult = syncStore.lastSyncResult()
+                    lastError = syncStore.lastError()
+                    lastErrorAt = syncStore.lastErrorAt()
                     message = if (report.ok) {
-                        "同步完成：上传 ${report.uploaded} / 下载 ${report.downloaded} / 冲突 ${report.conflicts}。"
+                        val copies = QuizRepository.banks.map { it.name }.filter { it.contains(CONFLICT_COPY_MARK) }
+                        val conflictNote = when {
+                            report.conflicts <= 0 -> ""
+                            copies.isEmpty() -> "冲突副本已保留，但本地题库里没找到副本名（需要引擎侧暴露）。"
+                            else -> "冲突副本：${copies.joinToString("、")}"
+                        }
+                        "同步完成：上传 ${report.uploaded} / 下载 ${report.downloaded} / 冲突 ${report.conflicts}。$conflictNote"
                     } else {
                         "同步失败：${report.message}"
                     }
@@ -246,7 +281,9 @@ fun WebDavBackupScreen(onBack: () -> Unit) {
             }) { Text("立即同步") }
         }
         GlassCard {
-            Text("云端备份 · ${entries.size} 份", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
+            Text("完整备份 · ${entries.size} 份", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
+            Text("这里只统计完整备份（Backups/ 目录）。增量同步的题库与记录存在 shiroha-sync/，不计入本列表——显示 0 份不代表同步没生效。",
+                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             if (entries.isEmpty()) Text("点击刷新读取远程备份。首次使用时，请先测试连接并创建备份目录。")
             entries.forEach { entry ->
                 Column(Modifier.padding(vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
