@@ -210,7 +210,14 @@ internal object WebDavPaths {
             ?: throw IllegalArgumentException("WebDAV 地址无效。")
         require(uri.rawUserInfo == null && uri.rawQuery == null && uri.rawFragment == null)
         val url = text.toHttpUrlOrNull() ?: throw IllegalArgumentException("WebDAV 地址无效。")
-        require(url.isHttps && url.username.isEmpty() && url.password.isEmpty())
+        // TODO(test/webdav-clear)：仅测试分支放行明文 HTTP。
+        //   合入主线前必须还原为：require(url.isHttps) { "WebDAV 仅支持 HTTPS 地址。" }
+        require(url.isHttps || url.scheme == "http") {
+            "WebDAV 协议必须为 http 或 https，当前为：${url.scheme}"
+        }
+        require(url.username.isEmpty() && url.password.isEmpty()) {
+            "WebDAV 地址不得内嵌凭据（username/password 必须为空）"
+        }
         requireSafeEncodedPath(uri.rawPath.orEmpty())
         return if (url.encodedPath.endsWith('/')) url else url.newBuilder().addPathSegment("").build()
     }

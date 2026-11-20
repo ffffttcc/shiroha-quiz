@@ -66,7 +66,9 @@ class SyncWorker(context: Context, params: WorkerParameters) : CoroutineWorker(c
             if (report.ok) Result.success() else Result.retry()
         } catch (cancelled: CancellationException) {
             throw cancelled
-        } catch (_: Exception) {
+        } catch error: Exception {
+            // 只补可观测性：把失败原因落进 sync 状态，重试策略保持不变。
+            store.recordFailure("${error::class.java.simpleName}: ${error.message}")
             Result.retry()
         }
     }

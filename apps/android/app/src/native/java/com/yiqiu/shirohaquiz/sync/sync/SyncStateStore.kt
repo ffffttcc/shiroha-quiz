@@ -52,6 +52,21 @@ class SyncStateStore(context: Context) {
             .apply()
     }
 
+    /**
+     * 记录本轮同步失败原因。与 [markSynced] 刻意分开：失败绝不能污染
+     * `last_sync_at` / `last_sync_result`（那组语义是"真的同步成功了"）。
+     */
+    fun recordFailure(reason: String?, at: Long = System.currentTimeMillis()) {
+        preferences.edit()
+            .putString(KEY_LAST_ERROR, reason?.take(MAX_ERROR_LENGTH) ?: "unknown")
+            .putLong(KEY_LAST_ERROR_AT, at)
+            .apply()
+    }
+
+    fun lastError(): String? = preferences.getString(KEY_LAST_ERROR, null)
+
+    fun lastErrorAt(): Long = preferences.getLong(KEY_LAST_ERROR_AT, 0L)
+
     fun bankMeta(): Map<String, SyncedBankMeta> {
         val raw = preferences.getString(KEY_BANK_META, null)?.takeIf { it.isNotBlank() } ?: return emptyMap()
         return runCatching {
@@ -93,6 +108,9 @@ class SyncStateStore(context: Context) {
         const val KEY_WIFI_ONLY = "sync_wifi_only"
         const val KEY_LAST_SYNC_AT = "last_sync_at"
         const val KEY_LAST_SYNC_RESULT = "last_sync_result"
+        const val KEY_LAST_ERROR = "last_error"
+        const val KEY_LAST_ERROR_AT = "last_error_at"
+        const val MAX_ERROR_LENGTH = 512
         const val KEY_BANK_META = "bank_meta_json"
         const val DEFAULT_INTERVAL_MINUTES = 30
         val SUPPORTED_INTERVALS = setOf(0, 15, 30, 60)
