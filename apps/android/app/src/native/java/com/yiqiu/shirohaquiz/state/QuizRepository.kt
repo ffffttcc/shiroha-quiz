@@ -2157,8 +2157,12 @@ object QuizRepository {
         persist()
     }
 
-    /** 实际生效的界面不透明度 0f..1f：未设置过 = 1f（与今天完全一致）。 */
+    /**
+     * 实际生效的界面不透明度 0f..1f：未设置过 = 1f（与今天完全一致）。
+     * 背景图关闭时一律返回 1f —— 滑杆此时也被隐藏，不该有看不见的状态继续生效。
+     */
     fun contentSurfaceAlphaFactor(): Float {
+        if (!customBackgroundEnabled) return 1f
         val stored = contentSurfaceAlpha
         return if (stored >= 0f) stored.coerceIn(0f, 1f) else 1f
     }
