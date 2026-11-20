@@ -165,11 +165,11 @@ object ShirohaMotion {
 }
 
 /**
- * 容器底色按「界面不透明度」重算 alpha：只动 alpha，色相/文字色一律不动。
+ * 容器底色按「界面不透明度」打折：只按比例减淡 alpha，色相/文字色一律不动。
  *
- * 语义：因子作用于「全透明 → 全实心」整段，而不是乘在原本的半透明上。
- * 所以 100% 输出的是**真正不透明**的底色（如 CardSoft 自带 0.9，100% 时归一化到 1.0），
- * 0% 则是纯透明只剩背景图；两端都符合直觉。
+ * 语义：因子乘在底色**自带的 alpha** 上，所以 100% 就是设计好的默认观感
+ * （如 CardSoft 自带 0.9，100% 时仍是 0.9 的半透明色，不做归一化），
+ * 0% 则是纯透明只剩背景图。
  *
  * 背景图关闭时直接返回原色：滑杆藏在自定义背景块里，关掉背景后用户看不到它，
  * 就不该还有隐藏状态在生效。
@@ -183,5 +183,6 @@ object ShirohaMotion {
 @Composable
 fun shirohaSurface(base: Color): Color {
     if (!QuizRepository.customBackgroundEnabled) return base
-    return base.copy(alpha = QuizRepository.contentSurfaceAlphaFactor())
+    val factor = QuizRepository.contentSurfaceAlphaFactor()
+    return if (factor >= 1f) base else base.copy(alpha = base.alpha * factor)
 }

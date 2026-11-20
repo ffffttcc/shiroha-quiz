@@ -362,8 +362,8 @@ fun QuizOptionCard(
     val interactionSource = remember { MutableInteractionSource() }
     val isCorrect = resultStyle == QuizOptionResultStyle.Correct
     val isWrong = resultStyle == QuizOptionResultStyle.Wrong
-    // 选项行底色同样受「界面不透明度」影响：alpha 由 shirohaSurface 统一重算，
-    // 色相（正确/错误/选中）保持不变；100% 时为实色，0% 时整行透明。
+    // 选项行底色同样受「界面不透明度」影响：alpha 由 shirohaSurface 按比例减淡，
+    // 色相（正确/错误/选中）与 100% 时的默认观感都不变。
     val containerColor = shirohaSurface(
         when (resultStyle) {
             QuizOptionResultStyle.Correct -> ShirohaColors.StateSuccessSoft.copy(alpha = if (ShirohaColors.isDarkMode) 0.9f else 0.72f)
