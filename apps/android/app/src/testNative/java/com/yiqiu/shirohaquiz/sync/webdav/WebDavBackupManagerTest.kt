@@ -3,9 +3,12 @@ package com.yiqiu.shirohaquiz.sync.webdav
 import com.yiqiu.shirohaquiz.sync.sync.SyncStateStore
 import kotlinx.coroutines.*
 import okhttp3.Call
+import okhttp3.Callback
 import okhttp3.Protocol
+import okhttp3.Request
 import okhttp3.Response
 import okhttp3.ResponseBody.Companion.toResponseBody
+import okhttp3.Timeout
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.setMain
@@ -119,12 +122,26 @@ class WebDavBackupManagerTest {
         Dispatchers.setMain(Dispatchers.Unconfined)
         val context = RuntimeEnvironment.getApplication()
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined)
-        val failing = Call.Factory { request ->
-            Response.Builder().request(request).protocol(Protocol.HTTP_1_1)
-                .code(404).message("test").body(ByteArray(0).toResponseBody()).build()
+        val failing = object : Call.Factory {
+            override fun newCall(request: Request): Call = object : Call {
+                override fun request(): Request = request
+                override fun execute(): Response = Response.Builder().request(request)
+                    .protocol(Protocol.HTTP_1_1).code(404).message("test")
+                    .body(ByteArray(0).toResponseBody()).build()
+                override fun enqueue(responseCallback: Callback) = error("Only blocking calls are supported by this test.")
+                override fun cancel() = Unit
+                override fun isExecuted(): Boolean = true
+                override fun isCanceled(): Boolean = false
+                override fun timeout(): Timeout = Timeout()
+                override fun clone(): Call = newCall(request)
+            }
         }
         val manager = WebDavBackupManager.createForTesting(context,
-            WebDavBackupHooks(exportFullBackupZip = { "native-backup-fixture".toByteArray() }),
+            WebDavBackupHooks(
+                previewBackupBytes = { WebDavBackupPreview(1, 1) },
+                replaceContentFromBackupBytes = { "已覆盖恢复" },
+                exportFullBackupZip = { "native-backup-fixture".toByteArray() }
+            ),
             WebDavSettingsStore(context),
             clientFactory = { settings, credentials -> WebDavClient(settings.baseUrl, settings.remoteDirectory,
                 credentials, callFactory = failing, xmlParserFactory = { org.kxml2.io.KXmlParser() }) },
