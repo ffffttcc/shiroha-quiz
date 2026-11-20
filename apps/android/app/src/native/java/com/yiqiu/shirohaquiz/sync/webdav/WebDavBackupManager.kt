@@ -2,6 +2,9 @@ package com.yiqiu.shirohaquiz.sync.webdav
 
 import android.content.Context
 import com.yiqiu.shirohaquiz.BuildConfig
+import com.yiqiu.shirohaquiz.security.BackupDecryptException
+import com.yiqiu.shirohaquiz.security.BackupEncryption
+import com.yiqiu.shirohaquiz.security.BackupRecoveryCodeStore
 import com.yiqiu.shirohaquiz.state.QuizRepository
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
@@ -20,6 +23,7 @@ import org.json.JSONObject
 import java.io.File
 import java.io.FileOutputStream
 import java.io.IOException
+import java.security.MessageDigest
 import java.util.UUID
 
 /**
@@ -37,6 +41,7 @@ class WebDavBackupManager private constructor(
     private val clockMillis: () -> Long
 ) {
     private val appContext = context.applicationContext
+    private val recoveryCodes = BackupRecoveryCodeStore(appContext)
     private val cacheDirectory = File(appContext.noBackupFilesDir, "webdav_cache")
     private val mutableSettings = MutableStateFlow(settingsStore.load())
     private val mutableTask = MutableStateFlow<WebDavTaskState?>(null)
@@ -59,6 +64,22 @@ class WebDavBackupManager private constructor(
 
     @Synchronized fun isBusy(): Boolean = active != null
     @Synchronized fun hasPassword(): Boolean = settingsStore.loadPassword() != null
+
+    /** 备份加密开关：只影响下一次上传；已存在的云端备份不会被改写。 */
+    @Synchronized fun isEncryptionEnabled(): Boolean = settingsStore.isEncryptionEnabled()
+
+    @Synchronized fun setEncryptionEnabled(enabled: Boolean): Boolean {
+        if (active != null) return false
+        return settingsStore.setEncryptionEnabled(enabled)
+    }
+
+    /**
+     * 取恢复码（没有就惰性生成）。走 IO 是因为 SecureSecretStore 要过 Keystore；
+     * 派生密钥仍是惰性的，只在真正加解密时才付 21 万轮的开销，绝不在 init() 路径。
+     */
+    suspend fun recoveryCode(): String = withContext(Dispatchers.IO) { recoveryCodes.ensure() }
+
+    @Synchronized fun hasRecoveryCode(): Boolean = recoveryCodes.existing() != null
 
     /** Settings cannot change the origin/account of an in-flight request or prepared restore. */
     @Synchronized fun saveSettings(value: WebDavSettings, password: String? = null): Boolean {
@@ -146,12 +167,24 @@ class WebDavBackupManager private constructor(
             if (bytes.isEmpty() || bytes.size.toLong() > MAX_BACKUP_BYTES) throw WebDavIntegrityException("导出的备份为空或超过大小限制。")
             val preview = withContext(Dispatchers.IO) { hooks.previewBackupBytes(bytes) }
             requireValidPreview(preview)
+            // 加密只发生在这里：明文 ZIP 已通过校验，落盘与上传的都是密文。
+            // entry.sha256 仍是**明文**内容哈希（文件名语义不变），密文的传输完整性
+            // 由长度检查 + GCM tag 保证，解密后再核对明文哈希。
+            val encrypt = settingsStore.isEncryptionEnabled()
+            val plaintextDigest = withContext(Dispatchers.IO) {
+                MessageDigest.getInstance("SHA-256").digest(bytes)
+            }
+            val plaintextSha256 = WebDavPaths.digestHex(plaintextDigest)
+            val payloadBytes = if (encrypt) withContext(Dispatchers.IO) {
+                work.cancellation.throwIfCancelled()
+                BackupEncryption.encrypt(bytes, recoveryCodes.ensure(), plaintextDigest)
+            } else bytes
             val digest = withContext(Dispatchers.IO) {
-                writePrivateFile(file, bytes, work.cancellation)
+                writePrivateFile(file, payloadBytes, work.cancellation)
                 WebDavClient.hashFile(file, work.cancellation, MAX_BACKUP_BYTES)
             }
             val createdAt = clockMillis()
-            val name = WebDavPaths.newBackupName(createdAt, BuildConfig.VERSION_NAME, digest.sha256)
+            val name = WebDavPaths.newBackupName(createdAt, BuildConfig.VERSION_NAME, plaintextSha256, encrypt)
             setFileName(work, name)
             val entry = WebDavBackupEntry(
                 fileName = name,
@@ -159,7 +192,7 @@ class WebDavBackupManager private constructor(
                 sizeBytes = digest.sizeBytes,
                 source = "android",
                 appVersion = BuildConfig.VERSION_NAME,
-                sha256 = digest.sha256,
+                sha256 = plaintextSha256,
                 bankCount = preview.bankCount,
                 questionCount = preview.questionCount,
                 includesWrongBook = preview.includesWrongBook,
@@ -200,12 +233,12 @@ class WebDavBackupManager private constructor(
     fun prepareRestore(entry: WebDavBackupEntry): Boolean = start(WebDavTaskKind.PREVIEW, entry.fileName) { work ->
         invalidatePrepared()
         val client = clientForSavedSettings()
-        val file = newCacheFile(if (entry.fileName.endsWith(".zip")) "zip" else "json")
+        val file = newCacheFile(cacheExtensionFor(entry))
         var retained = false
         try {
             val preview = withContext(Dispatchers.IO) {
                 client.download(entry, file, work.cancellation, progress(work))
-                val bytes = readVerifiedBytes(file, entry, work.cancellation)
+                val bytes = readBackupContent(file, entry, work.cancellation)
                 hooks.previewBackupBytes(bytes).also(::requireValidPreview)
             }
             work.cancellation.throwIfCancelled()
@@ -238,7 +271,8 @@ class WebDavBackupManager private constructor(
                 throw WebDavException("此备份不能用于覆盖本地内容。")
             }
             try {
-                val bytes = withContext(Dispatchers.IO) { readVerifiedBytes(file, prepared.entry, work.cancellation) }
+                // 解密在这一步完成；失败会在 irreversible 置位之前抛出，因此不会写入任何数据。
+                val bytes = withContext(Dispatchers.IO) { readBackupContent(file, prepared.entry, work.cancellation) }
                 // 恢复同样要全量解析 + 生成安全备份：只能在 IO 上跑；快照写入本身是线程安全的。
                 val result = withContext(Dispatchers.IO) {
                     synchronized(this@WebDavBackupManager) {
@@ -267,7 +301,7 @@ class WebDavBackupManager private constructor(
         val client = clientForSavedSettings()
         mutableDownload.value?.delete()
         mutableDownload.value = null
-        val file = newCacheFile(if (entry.fileName.endsWith(".zip")) "zip" else "json")
+        val file = newCacheFile(cacheExtensionFor(entry))
         var retained = false
         try {
             withContext(Dispatchers.IO) { client.download(entry, file, work.cancellation, progress(work)) }
@@ -499,7 +533,34 @@ class WebDavBackupManager private constructor(
         }
     }
 
-    private fun readVerifiedBytes(file: File, entry: WebDavBackupEntry, cancellation: WebDavCancellation): ByteArray {
+    private fun cacheExtensionFor(entry: WebDavBackupEntry): String =
+        if (entry.fileName.endsWith(".zip") || entry.fileName.endsWith(WebDavPaths.ENCRYPTED_SUFFIX)) "zip" else "json"
+
+    /**
+     * 拿到可以直接交给恢复逻辑的明文备份字节。
+     * 密文包的 entry.sha256 是明文哈希，所以这里跳过"文件哈希比对"，改由解密内部核对
+     * 明文摘要；任何解密失败都抛 [WebDavException]，调用方此时尚未写入任何数据。
+     */
+    private fun readBackupContent(file: File, entry: WebDavBackupEntry, cancellation: WebDavCancellation): ByteArray {
+        val encrypted = WebDavPaths.isEncryptedName(entry.fileName)
+        val raw = readVerifiedBytes(file, entry, cancellation, verifyContentHash = !encrypted)
+        if (!encrypted) return raw
+        val code = recoveryCodes.existing()
+            ?: throw WebDavException("本机没有备份恢复码，无法解密这份云端备份。")
+        val sha = entry.sha256 ?: throw WebDavException("备份缺少校验值，无法解密。")
+        return try {
+            BackupEncryption.decrypt(raw, code, WebDavPaths.hexToBytes(sha))
+        } catch (error: BackupDecryptException) {
+            throw WebDavException(error.message ?: "解密失败，已放弃恢复。")
+        }
+    }
+
+    private fun readVerifiedBytes(
+        file: File,
+        entry: WebDavBackupEntry,
+        cancellation: WebDavCancellation,
+        verifyContentHash: Boolean = true
+    ): ByteArray {
         if (!entry.integrityAvailable || entry.sizeBytes > MAX_BACKUP_BYTES || !file.isFile || file.length() != entry.sizeBytes) {
             throw WebDavIntegrityException("已校验的备份缓存不存在、发生变化或超过大小限制。")
         }
@@ -518,7 +579,7 @@ class WebDavBackupManager private constructor(
             if (input.read() != -1) throw WebDavIntegrityException("备份缓存大小在下载后发生变化。")
         }
         cancellation.throwIfCancelled()
-        if (!WebDavPaths.equalSha256(WebDavPaths.digestHex(digest.digest()), entry.sha256!!)) {
+        if (verifyContentHash && !WebDavPaths.equalSha256(WebDavPaths.digestHex(digest.digest()), entry.sha256!!)) {
             throw WebDavIntegrityException("恢复前备份缓存的 SHA256 校验失败。")
         }
         return bytes

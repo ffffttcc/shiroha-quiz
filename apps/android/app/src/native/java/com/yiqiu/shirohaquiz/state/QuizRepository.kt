@@ -4174,6 +4174,60 @@ object QuizRepository {
         return fallback
     }
 
+    /**
+     * IMPORT_COPY 的入库策略：**同名同组就地覆盖，不同名才新增**。
+     *
+     * 为什么必须这样：题库 id 是 `bank_<毫秒时间戳>`，A 机备份导到 B 机会多出一份同名库，
+     * 多设备来回拉几次就堆一地重复库。同理，覆盖时**必须保留本地 id**——wrongBook /
+     * favorites / studyRecords / 顺序进度全都按 bankId 关联，换成备份里的 id 会让它们全部失联。
+     * 名字相同但分组不同 → 视为不同题库，照常新增（不做跨分组误并）。
+     *
+     * 返回 (备份内的 bankId → 本地 bankId, 新增的库, 被覆盖的库)。
+     */
+    internal fun applyImportedBankMerge(
+        importedBanks: List<QuizBank>,
+        now: Long
+    ): Triple<Map<String, String>, List<QuizBank>, List<QuizBank>> {
+        val idMap = mutableMapOf<String, String>()
+        val addedBanks = mutableListOf<QuizBank>()
+        val replacedBanks = mutableListOf<QuizBank>()
+        val claimedLocalIds = mutableSetOf<String>()
+        val importedNamesByGroup = mutableMapOf<String, MutableSet<String>>()
+        var createdIndex = 0
+        importedBanks.forEach { bank ->
+            val cleanGroupName = normalizeBankGroupName(bank.groupName)
+            val existing = banks.firstOrNull { local ->
+                local.id !in claimedLocalIds &&
+                    normalizeBankGroupName(local.groupName) == cleanGroupName &&
+                    local.name == bank.name
+            }
+            if (existing != null) {
+                claimedLocalIds += existing.id
+                idMap[bank.id] = existing.id
+                val merged = bank.copy(id = existing.id, name = existing.name, groupName = cleanGroupName)
+                val index = banks.indexOfFirst { it.id == existing.id }
+                if (index >= 0) banks[index] = merged else banks += merged
+                // 题目整体换成了备份里的版本：题数/题型索引必须重算。
+                markBankDirty(existing.id)
+                replacedBanks += merged
+            } else {
+                val newId = "bank_${now}_$createdIndex"
+                createdIndex++
+                idMap[bank.id] = newId
+                val reservedNames = importedNamesByGroup.getOrPut(cleanGroupName) { mutableSetOf() }
+                val cleanName = uniqueImportedBankName(
+                    rawName = bank.name,
+                    groupName = cleanGroupName,
+                    reservedNames = reservedNames
+                )
+                reservedNames += cleanName
+                addedBanks += bank.copy(id = newId, name = cleanName, groupName = cleanGroupName)
+            }
+        }
+        banks.addAll(addedBanks)
+        return Triple(idMap, addedBanks, replacedBanks)
+    }
+
     private fun importBackupJsonInternal(
         context: Context,
         rawText: String,
@@ -4216,25 +4270,8 @@ object QuizRepository {
 
         val idMap = mutableMapOf<String, String>()
         val now = System.currentTimeMillis()
-        val importedNamesByGroup = mutableMapOf<String, MutableSet<String>>()
-        val addedBanks = importedBanks.mapIndexed { index, bank ->
-            val newId = "bank_${now}_$index"
-            idMap[bank.id] = newId
-            val cleanGroupName = normalizeBankGroupName(bank.groupName)
-            val reservedNames = importedNamesByGroup.getOrPut(cleanGroupName) { mutableSetOf() }
-            val cleanName = uniqueImportedBankName(
-                rawName = bank.name,
-                groupName = cleanGroupName,
-                reservedNames = reservedNames
-            )
-            reservedNames += cleanName
-            bank.copy(
-                id = newId,
-                name = cleanName,
-                groupName = cleanGroupName
-            )
-        }
-        banks.addAll(addedBanks)
+        val (mergedIdMap, addedBanks, replacedBanks) = applyImportedBankMerge(importedBanks, now)
+        idMap.putAll(mergedIdMap)
         val importedActiveBankId = root.optString("activeBankId")
         val mappedActiveBankId = idMap[importedActiveBankId]
         if (mappedActiveBankId != null) activeBankId = mappedActiveBankId
@@ -4513,6 +4550,7 @@ object QuizRepository {
         markAllContentDirty()
         persist()
         return "已导入 ${addedBanks.size} 个题库" +
+            (if (replacedBanks.isNotEmpty()) "，覆盖 ${replacedBanks.size} 个同名题库" else "") +
             if (mappedWrongBook.isNotEmpty() || mappedSlashedQuestions.isNotEmpty() || mappedFavorites.isNotEmpty() || mappedRecords.isNotEmpty()) {
                 "，同时恢复 ${mappedWrongBook.size} 条错题、${mappedSlashedQuestions.size} 条斩题、${mappedFavorites.size} 条收藏、${mappedRecords.size} 条记录。"
             } else {
