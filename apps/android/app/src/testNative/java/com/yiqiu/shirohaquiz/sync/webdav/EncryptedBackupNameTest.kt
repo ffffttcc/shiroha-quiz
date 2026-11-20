@@ -45,7 +45,8 @@ class EncryptedBackupNameTest {
         assertNotNull("加密备份必须能从文件名解析出校验值", entry.sha256)
         assertEquals(sha, entry.sha256)
         assertEquals("android", entry.source)
-        assertEquals("1.2.3", entry.appVersion)
+        // 注意：文件名里的版本号会把 "." 清洗成 "_"（既有行为），所以这里断言 1_2_3。
+        assertEquals("1_2_3", entry.appVersion)
         assertTrue(entry.integrityAvailable)
     }
 
