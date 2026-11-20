@@ -291,6 +291,8 @@ class WebDavBackupManager private constructor(
             if (mode == WebDavRestoreMode.REPLACE_CONTENT_KEEP_SETTINGS && !prepared.preview.canReplaceContent) {
                 throw WebDavException("此备份不能用于覆盖本地内容。")
             }
+            // 单写者：恢复期间禁止同步引擎改本地记录与 baseline。
+            com.yiqiu.shirohaquiz.sync.sync.SyncWriteGate.acquire()
             try {
                 // 解密在这一步完成；失败会在 irreversible 置位之前抛出，因此不会写入任何数据。
                 val bytes = withContext(Dispatchers.IO) { readBackupContent(file, prepared.entry, work.cancellation) }
@@ -310,8 +312,21 @@ class WebDavBackupManager private constructor(
                 if (result.startsWith("导入失败") || result.startsWith("恢复失败") || result.startsWith("覆盖失败")) {
                     throw WebDavException(result.take(300))
                 }
+                // 恢复改了本地内容：同步基线必须按「恢复后的本地内容」重建，并置 forceUploadLocal。
+                // 若沿用恢复前的基线，planner 会以为远端改过 -> DOWNLOAD -> 把刚恢复的内容又盖回去。
+                withContext(Dispatchers.IO) {
+                    val rebuilt = QuizRepository.banks.associate { bank ->
+                        com.yiqiu.shirohaquiz.sync.sync.SyncIdentity.keyOf(bank) to
+                            com.yiqiu.shirohaquiz.sync.sync.SyncedBankMeta(
+                                contentHash = com.yiqiu.shirohaquiz.sync.sync.SyncIdentity.contentHash(bank),
+                                updatedAt = clockMillis()
+                            )
+                    }
+                    com.yiqiu.shirohaquiz.sync.sync.SyncStateStore(appContext).rebuildBaselineAfterRestore(rebuilt)
+                }
                 result
             } finally {
+                com.yiqiu.shirohaquiz.sync.sync.SyncWriteGate.release()
                 invalidatePrepared()
             }
         }

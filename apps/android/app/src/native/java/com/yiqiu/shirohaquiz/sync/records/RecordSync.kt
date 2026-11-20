@@ -24,7 +24,7 @@ data class StudyEvent(
     val deviceId: String = ""
 )
 
-enum class RecordKind { WRONG, FAVORITE }
+enum class RecordKind { WRONG, FAVORITE, BANK }
 
 /**
  * per-question 状态寄存器（不是事件）：`deleted=true` 表示删除态，`false` 表示存在态。

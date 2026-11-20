@@ -1,6 +1,7 @@
 package com.yiqiu.shirohaquiz.sync.sync
 
 import com.yiqiu.shirohaquiz.state.QuizBank
+import com.yiqiu.shirohaquiz.sync.records.Tombstone
 
 enum class SyncActionKind { UPLOAD, DOWNLOAD, CONFLICT }
 
@@ -32,10 +33,14 @@ object SyncPlanner {
     fun plan(
         localBanks: List<QuizBank>,
         remoteBanks: Map<String, SyncBankRecord>,
-        baseline: Map<String, SyncedBankMeta>
+        baseline: Map<String, SyncedBankMeta>,
+        bankTombstones: List<Tombstone> = emptyList(),
+        forceUploadLocal: Boolean = false
     ): SyncPlan {
         val localByKey = localBanks.groupBy { SyncIdentity.keyOf(it) }
             .mapValues { (_, banks) -> banks.first() }
+        // 被 tombstone 删除的库：远端还有也不能拉回来，否则就是「删除复活」。
+        val tombstoned = bankTombstones.filter { it.deleted }.map { it.targetKey }.toSet()
         val entries = mutableListOf<SyncPlanEntry>()
         (localByKey.keys + remoteBanks.keys).sorted().forEach { key ->
             val local = localByKey[key]
@@ -46,8 +51,14 @@ object SyncPlanner {
             when {
                 local == null && remote == null -> Unit
                 local != null && remote == null -> entries += SyncPlanEntry(key, SyncActionKind.UPLOAD, local, null, localHash, null)
-                local == null && remote != null -> entries += SyncPlanEntry(key, SyncActionKind.DOWNLOAD, null, remote, null, remoteHash)
+                // 关键修复：远端在、本地没有 —— 若该 key 已被 tombstone 删除，就不许 DOWNLOAD。
+                local == null && remote != null ->
+                    if (key !in tombstoned) {
+                        entries += SyncPlanEntry(key, SyncActionKind.DOWNLOAD, null, remote, null, remoteHash)
+                    }
                 localHash == remoteHash -> Unit
+                // 恢复备份后：本地内容就是用户刚选的真相，方向强制 UPLOAD，绝不把恢复内容覆盖回去。
+                forceUploadLocal -> entries += SyncPlanEntry(key, SyncActionKind.UPLOAD, local, remote, localHash, remoteHash)
                 else -> {
                     val localChanged = baseHash != localHash
                     val remoteChanged = baseHash != remoteHash

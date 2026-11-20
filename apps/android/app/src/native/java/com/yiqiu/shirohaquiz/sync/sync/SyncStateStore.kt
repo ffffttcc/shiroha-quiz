@@ -67,6 +67,30 @@ class SyncStateStore(context: Context) {
 
     fun lastErrorAt(): Long = preferences.getLong(KEY_LAST_ERROR_AT, 0L)
 
+    /** 清单 epoch 的本地下限：只增不减，避免并发/重试把 epoch 写回旧值。 */
+    fun epoch(): Long = preferences.getLong(KEY_EPOCH, 0L)
+
+    fun advanceEpoch(candidate: Long) {
+        if (candidate > epoch()) preferences.edit().putLong(KEY_EPOCH, candidate).apply()
+    }
+
+    /** 恢复备份后置位：下一轮把本地内容强制上传，绝不被远端覆盖。 */
+    fun forceUploadLocal(): Boolean = preferences.getBoolean(KEY_FORCE_UPLOAD_LOCAL, false)
+
+    fun setForceUploadLocal(value: Boolean) =
+        preferences.edit().putBoolean(KEY_FORCE_UPLOAD_LOCAL, value).apply()
+
+    /**
+     * 恢复备份后重建同步基线：基线取「恢复后的本地内容哈希」。
+     * 若沿用恢复前的基线，planner 会以为远端改过 → 触发 DOWNLOAD，把刚恢复的内容又盖回去。
+     */
+    fun rebuildBaselineAfterRestore(entries: Map<String, SyncedBankMeta>) {
+        preferences.edit()
+            .putString(KEY_BANK_META, encodeMeta(entries))
+            .putBoolean(KEY_FORCE_UPLOAD_LOCAL, true)
+            .apply()
+    }
+
     fun bankMeta(): Map<String, SyncedBankMeta> {
         val raw = preferences.getString(KEY_BANK_META, null)?.takeIf { it.isNotBlank() } ?: return emptyMap()
         return runCatching {
@@ -110,6 +134,8 @@ class SyncStateStore(context: Context) {
         const val KEY_LAST_SYNC_RESULT = "last_sync_result"
         const val KEY_LAST_ERROR = "last_error"
         const val KEY_LAST_ERROR_AT = "last_error_at"
+        const val KEY_EPOCH = "sync_epoch"
+        const val KEY_FORCE_UPLOAD_LOCAL = "force_upload_local"
         const val MAX_ERROR_LENGTH = 512
         const val KEY_BANK_META = "bank_meta_json"
         const val DEFAULT_INTERVAL_MINUTES = 30

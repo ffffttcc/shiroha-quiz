@@ -2,6 +2,9 @@ package com.yiqiu.shirohaquiz.sync.sync
 
 import com.yiqiu.shirohaquiz.security.BackupDecryptException
 import com.yiqiu.shirohaquiz.security.BackupEncryption
+import com.yiqiu.shirohaquiz.sync.records.RecordKind
+import com.yiqiu.shirohaquiz.sync.records.Tombstone
+import org.json.JSONArray
 import org.json.JSONObject
 import java.io.ByteArrayOutputStream
 import java.security.SecureRandom
@@ -13,10 +16,17 @@ import javax.crypto.spec.SecretKeySpec
 object SyncObjects {
     const val MANIFEST = "shiroha-sync-manifest.enc"
     private const val BANK_PREFIX = "shiroha-sync-bank-"
+    private const val RECORD_PREFIX = "shiroha-sync-record-"
 
     fun bankName(contentHash: String): String = "$BANK_PREFIX$contentHash.enc"
 
-    fun isSyncObject(name: String): Boolean = name == MANIFEST || (name.startsWith(BANK_PREFIX) && name.endsWith(".enc"))
+    /** 记录事件分片：扁平命名（WebDavClient 的名字白名单不接受子目录）。 */
+    fun recordName(shardHash: String): String = "$RECORD_PREFIX$shardHash.enc"
+
+    fun isSyncObject(name: String): Boolean =
+        name == MANIFEST ||
+            (name.startsWith(BANK_PREFIX) && name.endsWith(".enc")) ||
+            (name.startsWith(RECORD_PREFIX) && name.endsWith(".enc"))
 
     fun bankHashOf(name: String): String? =
         if (name.startsWith(BANK_PREFIX) && name.endsWith(".enc")) {
@@ -114,16 +124,25 @@ data class SyncRecordSnapshot(
 
 /**
  * 云端清单。deviceId 只用来排查「这次是谁赢的」，**不参与冲突判定**。
+ *
+ * v2 新增（v1 清单缺这些字段时按空/default 读，保证向下兼容）：
+ * - [epoch]：单调递增整数，只在「本轮确实写了变更」时 +1，用于 tombstone 裁决，不碰墙钟；
+ * - [recordShards]：记录事件分片哈希列表（云端对象见 [SyncObjects.recordName]）；
+ * - [bankTombstones] / [recordTombstones]：库级与记录级删除标记。
  */
 data class SyncManifest(
     val deviceId: String,
     val updatedAt: Long,
     val banks: Map<String, SyncBankRecord>,
     val recordSnapshots: Map<String, SyncRecordSnapshot> = emptyMap(),
-    val version: Int = CURRENT_VERSION
+    val version: Int = CURRENT_VERSION,
+    val epoch: Long = 0L,
+    val recordShards: List<String> = emptyList(),
+    val bankTombstones: List<Tombstone> = emptyList(),
+    val recordTombstones: List<Tombstone> = emptyList()
 ) {
     companion object {
-        const val CURRENT_VERSION = 1
+        const val CURRENT_VERSION = 2
     }
 }
 
@@ -151,7 +170,49 @@ object SyncManifestCodec {
             })
         }
         root.put("recordSnapshots", records)
+        // v2 字段。v1 客户端读到未知字段会忽略，故此处可安全写入。
+        root.put("epoch", manifest.epoch)
+        val shards = JSONArray()
+        manifest.recordShards.sorted().forEach { shard -> shards.put(shard) }
+        root.put("recordShards", shards)
+        root.put("bankTombstones", tombstonesToJson(manifest.bankTombstones))
+        root.put("recordTombstones", tombstonesToJson(manifest.recordTombstones))
         return root.toString().toByteArray(Charsets.UTF_8)
+    }
+
+    private fun tombstonesToJson(tombstones: List<Tombstone>): JSONArray {
+        val array = JSONArray()
+        tombstones
+            .sortedWith(compareBy({ it.kind.name }, { it.targetKey }))
+            .forEach { tombstone ->
+                array.put(JSONObject().apply {
+                    put("kind", tombstone.kind.name)
+                    put("targetKey", tombstone.targetKey)
+                    put("epoch", tombstone.epoch)
+                    put("deviceId", tombstone.deviceId)
+                    put("deleted", tombstone.deleted)
+                })
+            }
+        return array
+    }
+
+    private fun tombstonesFromJson(array: JSONArray?): List<Tombstone> {
+        if (array == null) return emptyList()
+        return buildList {
+            for (index in 0 until array.length()) {
+                val item = array.optJSONObject(index) ?: continue
+                val kind = runCatching { RecordKind.valueOf(item.optString("kind")) }.getOrNull() ?: continue
+                add(
+                    Tombstone(
+                        kind = kind,
+                        targetKey = item.optString("targetKey"),
+                        epoch = item.optLong("epoch", 0L),
+                        deviceId = item.optString("deviceId"),
+                        deleted = item.optBoolean("deleted", true)
+                    )
+                )
+            }
+        }
     }
 
     fun fromJson(bytes: ByteArray): SyncManifest {
@@ -182,12 +243,26 @@ object SyncManifestCodec {
                 updatedAt = item.optLong("updatedAt", 0L)
             )
         }
+        val shardsJson = root.optJSONArray("recordShards")
+        val shards = buildList {
+            if (shardsJson != null) {
+                for (index in 0 until shardsJson.length()) {
+                    val shard = shardsJson.optString(index)
+                    if (shard.length == 64 && shard.matches(Regex("[a-f0-9]{64}"))) add(shard)
+                }
+            }
+        }
         return SyncManifest(
             deviceId = root.optString("deviceId"),
             updatedAt = root.optLong("updatedAt", 0L),
             banks = banks,
             recordSnapshots = snapshots,
-            version = version
+            version = version,
+            // v1 清单没有这些字段：按 default 读入，保证向下兼容。
+            epoch = root.optLong("epoch", 0L),
+            recordShards = shards,
+            bankTombstones = tombstonesFromJson(root.optJSONArray("bankTombstones")),
+            recordTombstones = tombstonesFromJson(root.optJSONArray("recordTombstones"))
         )
     }
 
