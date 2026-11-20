@@ -41,7 +41,7 @@ class WebDavClient(
     private val maxBackupBytes: Long = DEFAULT_MAX_BACKUP_BYTES,
     private val xmlParserFactory: () -> XmlPullParser = { XmlPullParserFactory.newInstance().newPullParser() },
     // TODO(test/webdav-clear)：仅测试分支放行明文 http，默认拒绝；合入主线前删除该参数。
-    allowInsecureHttp: Boolean = false
+    private val allowInsecureHttp: Boolean = false
 ) {
     private val base = WebDavPaths.baseUrl(baseUrl, allowInsecureHttp = allowInsecureHttp)
     private val directoryParts = WebDavPaths.directory(remoteDirectory).trim('/').split('/')
@@ -504,7 +504,14 @@ class WebDavClient(
     }
 
     private fun request(url: HttpUrl, method: String, body: RequestBody? = null): Request {
-        require(WebDavPaths.sameOrigin(base, url) && url.isHttps)
+        // 两条判据分开、且都必须带消息：无消息的 require 只吐 "Failed requirement."，排查时等于盲盒。
+        require(WebDavPaths.sameOrigin(base, url)) {
+            "WebDAV 请求越界：$url 不属于 $base 同源（超出同源范围）"
+        }
+        // TODO(test/webdav-clear)：allowInsecureHttp 仅测试分支放行明文；默认 false 时行为与主线一致。
+        require(url.isHttps || allowInsecureHttp) {
+            "WebDAV 请求协议不合：需要 https，当前为：${url.scheme}"
+        }
         return Request.Builder().url(url).method(method, body)
             .header("Authorization", Credentials.basic(credentials.username, credentials.password, Charsets.UTF_8))
             .header("Cache-Control", "no-store")

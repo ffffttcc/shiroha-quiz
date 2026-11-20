@@ -28,7 +28,11 @@ class WebDavSettingsStore(context: Context, private val secrets: SecureSecretSto
         val clean = settings.validated(allowInsecureHttp = allowInsecureHttp)
         val previous = load()
         val sameAccount = runCatching {
-            WebDavPaths.sameOrigin(WebDavPaths.baseUrl(previous.baseUrl), WebDavPaths.baseUrl(clean.baseUrl)) &&
+            // TODO(test/webdav-clear)：与 save()/credentials() 口径一致，避免 http 配置下 sameAccount 被误判为 false。
+            WebDavPaths.sameOrigin(
+                WebDavPaths.baseUrl(previous.baseUrl, allowInsecureHttp = BuildConfig.DEBUG),
+                WebDavPaths.baseUrl(clean.baseUrl, allowInsecureHttp = BuildConfig.DEBUG)
+            ) &&
                 previous.username == clean.username
         }.getOrDefault(false)
         val effective = password ?: if (sameAccount) loadPassword() else null
