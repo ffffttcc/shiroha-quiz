@@ -457,6 +457,48 @@ object QuizRepository {
     /** 事件存储（追加式日志）；首次使用时才建，并顺手跑一次老数据迁移。 */
     private var recordEventStore: com.yiqiu.shirohaquiz.sync.records.RecordEventStore? = null
 
+    private var recordProgressCache: RecordProgress? = null
+
+    private fun recordProgress(): RecordProgress? {
+        val context = appContext ?: return null
+        recordProgressCache?.let { return it }
+        return RecordProgress.forContext(context).also { recordProgressCache = it }
+    }
+
+    /** 题目 → 内容派生键。UI 不要自己算哈希，统一走这里。 */
+    fun recordQuestionKey(question: Question): String = com.yiqiu.shirohaquiz.sync.records.RecordKey.of(
+        question.type.name,
+        question.question,
+        question.options.map { it.text },
+        question.answer
+    )
+
+    /**
+     * UI 读取派生计数的**唯一入口**（带缓存，按日志文件 size/mtime 失效）。
+     * 值 = legacyBaseline + 事件聚合，不再是 `WrongQuestionEntry` 里的累计字段。
+     */
+    fun derivedCounts(): Map<String, com.yiqiu.shirohaquiz.sync.records.DerivedCounts> =
+        recordProgress()?.all() ?: emptyMap()
+
+    fun derivedCountsFor(question: Question): com.yiqiu.shirohaquiz.sync.records.DerivedCounts =
+        recordProgress()?.forKey(recordQuestionKey(question))
+            ?: com.yiqiu.shirohaquiz.sync.records.DerivedCounts(0, 0, 0, 0)
+
+    /**
+     * 迁移期一致性探针：比对旧累计字段与派生值，**只记日志、绝不改正**。
+     * 迁移或双写出 bug 时这里会先于用户报到 logcat。
+     */
+    fun recordConsistencyReport(): List<String> {
+        val progress = recordProgress() ?: return emptyList()
+        val legacy = wrongBook.associate { entry ->
+            recordQuestionKey(entry.question) to
+                com.yiqiu.shirohaquiz.sync.records.LegacyBaseline(entry.wrongCount, entry.rightCount)
+        }
+        val issues = progress.mismatches(legacy)
+        issues.take(5).forEach { android.util.Log.w("RecordProgress", it) }
+        return issues
+    }
+
     private fun syncRecordStore(): com.yiqiu.shirohaquiz.sync.records.RecordEventStore? {
         val context = appContext ?: return null
         recordEventStore?.let { return it }

@@ -222,7 +222,7 @@ fun WrongBookScreen(
                 .sortedWith(
                     compareBy<WrongQuestionEntry> { if (it.status == WrongStatus.MASTERED.label) 1 else 0 }
                         .thenBy { it.nextReviewAt ?: 0L }
-                        .thenByDescending { it.wrongCount }
+                        .thenByDescending { derivedWrongCount(it) }
                         .thenByDescending { it.lastWrongAt }
                 )
         }
@@ -897,7 +897,7 @@ private fun WrongQuestionPreview(entry: WrongQuestionEntry) {
         )
         Spacer(Modifier.height(8.dp))
         Text(
-            text = "错 ${entry.wrongCount} 次 · 对 ${entry.rightCount} 次 · 最近错误 ${formatTimestamp(entry.lastWrongAt)}",
+            text = "错 ${derivedWrongCount(entry)} 次 · 对 ${derivedRightCount(entry)} 次 · 最近错误 ${formatTimestamp(entry.lastWrongAt)}",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
@@ -968,10 +968,20 @@ private fun List<WrongQuestionEntry>.filterBy(filter: WrongBookFilter): List<Wro
 private fun List<WrongQuestionEntry>.sortBy(sort: WrongBookSort): List<WrongQuestionEntry> {
     return when (sort) {
         WrongBookSort.RECENT_WRONG -> sortedByDescending { it.lastWrongAt }
-        WrongBookSort.WRONG_COUNT -> sortedWith(compareByDescending<WrongQuestionEntry> { it.wrongCount }.thenByDescending { it.lastWrongAt })
-        WrongBookSort.MASTERY -> sortedWith(compareBy<WrongQuestionEntry> { statusRank(it.status) }.thenByDescending { it.wrongCount })
+        WrongBookSort.WRONG_COUNT -> sortedWith(compareByDescending<WrongQuestionEntry> { derivedWrongCount(it) }.thenByDescending { it.lastWrongAt })
+        WrongBookSort.MASTERY -> sortedWith(compareBy<WrongQuestionEntry> { statusRank(it.status) }.thenByDescending { derivedWrongCount(it) })
     }
 }
+
+/**
+ * 迁移期：错题本里的次数一律读**派生值**（legacyBaseline + 事件聚合）。
+ * `WrongQuestionEntry.wrongCount/rightCount` 保留写入仅供回滚兼容，UI 不再直接读。
+ */
+private fun derivedWrongCount(entry: WrongQuestionEntry): Int =
+    QuizRepository.derivedCountsFor(entry.question).wrongCount
+
+private fun derivedRightCount(entry: WrongQuestionEntry): Int =
+    QuizRepository.derivedCountsFor(entry.question).rightCount
 
 private fun resolveWrongBookReviewCount(
     mode: WrongBookReviewCountMode,
