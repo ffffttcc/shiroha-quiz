@@ -31,7 +31,7 @@ class WebDavInsecureHttpGateTest {
         assertTrue("消息应指向协议: $message", message.contains("协议"))
     }
 
-    /** 用例 3：放行 http 也不等于放行凭据——http 内嵌账号密码仍须拒，消息指向「凭据」。 */
+    /** 用例 3：放行 http 也不等于放行凭据——http 内嵌账号密码仍须拒，实由 rawUserInfo 判据拦下，消息指向「凭据」。 */
     @Test
     fun allowInsecureHttpStillRejectsUserInfoOnPlainHttp() {
         val error = assertThrows(IllegalArgumentException::class.java) {
@@ -43,7 +43,9 @@ class WebDavInsecureHttpGateTest {
 
     /**
      * 用例 4（承重用例）：allowInsecureHttp=true 且地址是 https 时，协议判据已经失效，
-     * 只剩 userinfo 判据能拒绝。这条挂掉说明凭据防线其实是空的。
+     * 凭据防线只剩 URI 层面的 rawUserInfo 判据（WebDavModels.kt:219）能拦；
+     * 更靠后的 username/password 判据（:225）在这一步根本不会被命中。
+     * 这条挂掉说明凭据防线其实是空的。
      */
     @Test
     fun allowInsecureHttpStillRejectsUserInfoOnHttps() {

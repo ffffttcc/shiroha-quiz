@@ -1,5 +1,7 @@
 package com.yiqiu.shirohaquiz.sync.webdav
 
+import com.yiqiu.shirohaquiz.BuildConfig
+
 import android.content.Context
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
@@ -36,7 +38,8 @@ object WebDavAutoBackup {
         if (settings.intervalDays > 0) {
             val manager = WebDavBackupManager.getInstance(context)
             require(manager.settings.value.rememberPassword && manager.hasPassword()) { "自动备份需要先加密保存 WebDAV 应用密码。" }
-            manager.settings.value.validated()
+            // TODO(test/webdav-clear)：测试分支放行明文 http（debug 包）；合入主线前删除该传参。
+            manager.settings.value.validated(allowInsecureHttp = BuildConfig.DEBUG)
         }
         check(preferences(context).edit().putInt("days", settings.intervalDays).putBoolean("wifi", settings.wifiOnly)
             .putBoolean("charging", settings.chargingOnly).putInt("keep", settings.keepCount)

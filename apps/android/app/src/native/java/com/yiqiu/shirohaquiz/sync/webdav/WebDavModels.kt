@@ -211,7 +211,8 @@ internal object WebDavPaths {
      */
     fun baseUrl(text: String, allowInsecureHttp: Boolean = false): HttpUrl {
         val trimmed = text.trim()
-        // TEST-ONLY（临时联调分支）：允许 http，正式主线仍是仅 https。
+        // 前缀白名单：http/https 都先放到这里做解析；真正的协议闸门是下方条件化的
+        // isHttps 判据——allowInsecureHttp = false 时 http 依旧会被拒，并非无条件放行。
         require(trimmed.startsWith("https://", true) || trimmed.startsWith("http://", true)) { "WebDAV 仅支持 HTTPS 地址。" }
         val uri = runCatching { java.net.URI(trimmed) }.getOrNull()
             ?: throw IllegalArgumentException("WebDAV 地址无效。")
