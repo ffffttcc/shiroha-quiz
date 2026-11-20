@@ -134,6 +134,11 @@ fun RecordsScreen(
             title = "学习记录",
             subtitle = ""
         )
+        Text(
+            text = "仅保留最近 1500 条记录（每个题库至少保留 20 条）。",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
 
         if (records.isEmpty()) {
             EmptyStateIllustration(

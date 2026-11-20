@@ -187,6 +187,9 @@ object QuizRepository {
     private const val KEY_BANK_INDEX = "bank_index"
     private const val KEY_BANK_STORAGE_VERSION = "bank_storage_version"
     private const val BANK_STORAGE_VERSION = 2
+    /** 学习记录保留上限：最近 1500 条 + 每题库保底最近 20 条（并集）。 */
+    private const val STUDY_RECORD_KEEP_RECENT = 1500
+    private const val STUDY_RECORD_KEEP_PER_BANK = 20
     private const val BANK_STORAGE_PRE_SPLIT_DIR_NAME = "_pre_split"
     private const val BANK_STORAGE_DIR_NAME = "banks"
     private const val BANK_STORAGE_STAGING_DIR_NAME = ".staging"
@@ -2856,6 +2859,7 @@ object QuizRepository {
                 scopeName = examSessionScopeName
             )
         )
+        pruneStudyRecords()
 
         examQuestions.forEach { question ->
             val userAnswer = examAnswers[question.id].orEmpty()
@@ -4820,6 +4824,7 @@ object QuizRepository {
                 scopeName = practiceSessionScopeName
             )
         )
+        pruneStudyRecords()
         markContentDirty(KEY_STUDY_RECORDS)
         if (advanceSequentialProgress) {
             advanceSequentialProgressAfterComplete()
@@ -5449,6 +5454,28 @@ object QuizRepository {
                 )
             )
         }
+    }
+
+    /**
+     * 学习记录裁剪：按 timestamp 倒序保留最近 [STUDY_RECORD_KEEP_RECENT] 条，
+     * 再对每个题库保底它自己最近的 [STUDY_RECORD_KEEP_PER_BANK] 条，两者取并集，其余删除。
+     * 没到上限时直接返回（每次练习结束都会调用，必须廉价）。
+     */
+    private fun pruneStudyRecords() {
+        if (studyRecords.size <= STUDY_RECORD_KEEP_RECENT) return
+        val ordered = studyRecords.withIndex().sortedByDescending { it.value.timestamp }
+        val keepIndices = HashSet<Int>(STUDY_RECORD_KEEP_RECENT + STUDY_RECORD_KEEP_PER_BANK * 8)
+        ordered.take(STUDY_RECORD_KEEP_RECENT).forEach { keepIndices.add(it.index) }
+        ordered
+            .filter { !it.value.bankId.isNullOrBlank() }
+            .groupBy { it.value.bankId }
+            .values
+            .forEach { group -> group.take(STUDY_RECORD_KEEP_PER_BANK).forEach { keepIndices.add(it.index) } }
+        if (keepIndices.size == studyRecords.size) return
+        val kept = studyRecords.filterIndexed { index, _ -> keepIndices.contains(index) }
+        studyRecords.clear()
+        studyRecords.addAll(kept)
+        markContentDirty(KEY_STUDY_RECORDS)
     }
 
     private fun markWrongQuestionRight(bank: QuizBank?, question: Question) {
