@@ -480,6 +480,7 @@ object QuizRepository {
 
     fun init(context: Context) {
         if (initialized) return
+        awaitPendingPersists()
         recoverPendingCloudRestore(context)
         initialized = true
         appContext = context.applicationContext
@@ -4725,6 +4726,7 @@ object QuizRepository {
     }
 
     internal fun resetForTesting() {
+        awaitPendingPersists()
         banks.clear()
         wrongBook.clear()
         slashedQuestions.clear()
@@ -5860,7 +5862,20 @@ object QuizRepository {
             KEY_PRACTICE_RECITE_SEQUENTIAL_PROGRESS
         )
         markBankDirty(*banks.map { it.id }.toTypedArray())
+        forceSyncContentPersist = true
     }
+
+    /**
+     * 整库级变更（init 的 sanitize 回写、删除题库、云恢复发布）之后的那一次 persist
+     * 必须同步落盘：这类写入是「重置/恢复」语义的边界，调用返回时就应当已经落盘。
+     */
+    private var forceSyncContentPersist = false
+
+    /** 异步落盘的单线程写入者（FIFO 保序）。 */
+    private val persistExecutor: java.util.concurrent.ExecutorService =
+        java.util.concurrent.Executors.newSingleThreadExecutor { runnable ->
+            Thread(runnable, "quiz-persist").apply { isDaemon = true }
+        }
 
     private fun persist() {
         val context = appContext ?: return
@@ -5944,15 +5959,83 @@ object QuizRepository {
             editor.putString(KEY_BANKS, "")
         }
         if (dirtyContentKeys.contains(KEY_ACTIVE_BANK_ID)) editor.putString(KEY_ACTIVE_BANK_ID, activeBankId)
-        if (dirtyContentKeys.contains(KEY_WRONG_BOOK)) editor.putString(KEY_WRONG_BOOK, wrongBookToJson(wrongBook))
-        if (dirtyContentKeys.contains(KEY_SLASHED_QUESTIONS)) editor.putString(KEY_SLASHED_QUESTIONS, slashedQuestionsToJson(slashedQuestions))
-        if (dirtyContentKeys.contains(KEY_FAVORITE_QUESTIONS)) editor.putString(KEY_FAVORITE_QUESTIONS, favoriteQuestionsToJson(favoriteQuestions))
-        if (dirtyContentKeys.contains(KEY_STUDY_RECORDS)) editor.putString(KEY_STUDY_RECORDS, studyRecordsToJson(studyRecords))
-        if (dirtyContentKeys.contains(KEY_PRACTICE_SEQUENTIAL_PROGRESS)) editor.putString(KEY_PRACTICE_SEQUENTIAL_PROGRESS, sequentialProgressToJson(practiceSequentialProgress))
-        if (dirtyContentKeys.contains(KEY_PRACTICE_RECITE_SEQUENTIAL_PROGRESS)) editor.putString(KEY_PRACTICE_RECITE_SEQUENTIAL_PROGRESS, sequentialProgressToJson(practiceReciteSequentialProgress))
+
+        // 整库级变更后的第一次落盘：同步写，保证调用返回时已经落地（恢复/重置语义）。
+        if (forceSyncContentPersist) {
+            forceSyncContentPersist = false
+            if (dirtyContentKeys.contains(KEY_WRONG_BOOK)) editor.putString(KEY_WRONG_BOOK, wrongBookToJson(wrongBook))
+            if (dirtyContentKeys.contains(KEY_SLASHED_QUESTIONS)) {
+                editor.putString(KEY_SLASHED_QUESTIONS, slashedQuestionsToJson(slashedQuestions))
+            }
+            if (dirtyContentKeys.contains(KEY_FAVORITE_QUESTIONS)) {
+                editor.putString(KEY_FAVORITE_QUESTIONS, favoriteQuestionsToJson(favoriteQuestions))
+            }
+            if (dirtyContentKeys.contains(KEY_STUDY_RECORDS)) {
+                editor.putString(KEY_STUDY_RECORDS, studyRecordsToJson(studyRecords))
+            }
+            if (dirtyContentKeys.contains(KEY_PRACTICE_SEQUENTIAL_PROGRESS)) {
+                editor.putString(KEY_PRACTICE_SEQUENTIAL_PROGRESS, sequentialProgressToJson(practiceSequentialProgress))
+            }
+            if (dirtyContentKeys.contains(KEY_PRACTICE_RECITE_SEQUENTIAL_PROGRESS)) {
+                editor.putString(
+                    KEY_PRACTICE_RECITE_SEQUENTIAL_PROGRESS,
+                    sequentialProgressToJson(practiceReciteSequentialProgress)
+                )
+            }
+            editor.apply()
+            dirtyContentKeys.clear()
+            if (banksDirty && !banksFlushed) dirtyContentKeys.add(KEY_BANKS)
+            return
+        }
+
+        // 大 JSON 内容键：主线程只取不可变快照（元素全是 val 的浅拷贝），序列化与落盘交给
+        // 单线程写入者排队执行。设置项与题库索引仍在上面同步写完：它们廉价，而且导入/恢复
+        // 路径依赖「调用返回时已经落盘」。
+        val wrongBookSnapshot = if (dirtyContentKeys.contains(KEY_WRONG_BOOK)) wrongBook.toList() else null
+        val slashedSnapshot = if (dirtyContentKeys.contains(KEY_SLASHED_QUESTIONS)) slashedQuestions.toList() else null
+        val favoritesSnapshot = if (dirtyContentKeys.contains(KEY_FAVORITE_QUESTIONS)) favoriteQuestions.toList() else null
+        val recordsSnapshot = if (dirtyContentKeys.contains(KEY_STUDY_RECORDS)) studyRecords.toList() else null
+        val seqSnapshot = if (dirtyContentKeys.contains(KEY_PRACTICE_SEQUENTIAL_PROGRESS)) {
+            practiceSequentialProgress.toMap()
+        } else null
+        val reciteSnapshot = if (dirtyContentKeys.contains(KEY_PRACTICE_RECITE_SEQUENTIAL_PROGRESS)) {
+            practiceReciteSequentialProgress.toMap()
+        } else null
+
         editor.apply()
         dirtyContentKeys.clear()
         if (banksDirty && !banksFlushed) dirtyContentKeys.add(KEY_BANKS)
+
+        if (wrongBookSnapshot != null || slashedSnapshot != null || favoritesSnapshot != null ||
+            recordsSnapshot != null || seqSnapshot != null || reciteSnapshot != null
+        ) {
+            // 单一写入者：同一个单线程执行器按提交顺序执行，最后一次提交的最后落盘，
+            // 不会出现「旧快照晚到覆盖新值」。
+            persistExecutor.execute {
+                runCatching {
+                    val contentEditor = prefs.edit()
+                    wrongBookSnapshot?.let { contentEditor.putString(KEY_WRONG_BOOK, wrongBookToJson(it)) }
+                    slashedSnapshot?.let { contentEditor.putString(KEY_SLASHED_QUESTIONS, slashedQuestionsToJson(it)) }
+                    favoritesSnapshot?.let { contentEditor.putString(KEY_FAVORITE_QUESTIONS, favoriteQuestionsToJson(it)) }
+                    recordsSnapshot?.let { contentEditor.putString(KEY_STUDY_RECORDS, studyRecordsToJson(it)) }
+                    seqSnapshot?.let {
+                        contentEditor.putString(KEY_PRACTICE_SEQUENTIAL_PROGRESS, sequentialProgressToJson(it))
+                    }
+                    reciteSnapshot?.let {
+                        contentEditor.putString(KEY_PRACTICE_RECITE_SEQUENTIAL_PROGRESS, sequentialProgressToJson(it))
+                    }
+                    contentEditor.apply()
+                }
+            }
+        }
+    }
+
+    /**
+     * 等待已排队的异步内容落盘完成。只在「重置/初始化」这类边界调用，保证
+     * 测试与重启语义确定（内存已清空时必须先让上一批快照落地）。
+     */
+    private fun awaitPendingPersists() {
+        runCatching { persistExecutor.submit {}.get(2, java.util.concurrent.TimeUnit.SECONDS) }
     }
     // ---- 惰性加载：索引占位 + 后台逐库补全 ----
 
