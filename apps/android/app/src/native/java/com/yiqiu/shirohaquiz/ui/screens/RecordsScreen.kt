@@ -3,6 +3,8 @@ package com.yiqiu.shirohaquiz.ui.screens
 import com.yiqiu.shirohaquiz.ui.components.shirohaNoRippleClickable
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -28,6 +30,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -43,7 +46,9 @@ import com.yiqiu.shirohaquiz.R
 import com.yiqiu.shirohaquiz.state.DEFAULT_BANK_GROUP_NAME
 import com.yiqiu.shirohaquiz.state.QuizBank
 import com.yiqiu.shirohaquiz.state.QuizRepository
+import com.yiqiu.shirohaquiz.state.BankAccuracyRow
 import com.yiqiu.shirohaquiz.state.StudyRecord
+import com.yiqiu.shirohaquiz.state.StudyStats
 import com.yiqiu.shirohaquiz.ui.components.ActionPillButton
 import com.yiqiu.shirohaquiz.ui.components.EmptyStateIllustration
 import com.yiqiu.shirohaquiz.ui.components.GlassCard
@@ -55,6 +60,8 @@ import com.yiqiu.shirohaquiz.ui.components.StatusChip
 import com.yiqiu.shirohaquiz.ui.theme.ShirohaColors
 import com.yiqiu.shirohaquiz.ui.theme.ShirohaRadius
 import com.yiqiu.shirohaquiz.ui.theme.ShirohaSpacing
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -158,6 +165,7 @@ fun RecordsScreen(
         }
 
         if (records.isNotEmpty()) {
+            BankAccuracySummary(records = records, banks = banks)
             IllustrationHeroCard(
             title = "学习记录会在这里积累",
             subtitle = "练习和考试都会收录到这里。",
@@ -521,4 +529,114 @@ private fun recordFooterText(record: StudyRecord): String {
 
 internal fun Double.trimScore(): String {
     return if (this % 1.0 == 0.0) this.toInt().toString() else "%.1f".format(this)
+}
+
+/**
+ * 按题库（= 章节）的正确率汇总。
+ * 只在进入记录页时算一次：signature 不变就不重算；计算放在 Dispatchers.Default，
+ * 首帧显示「正在统计…」，绝不放进 init()/冷启动路径。
+ */
+@Composable
+private fun BankAccuracySummary(records: List<StudyRecord>, banks: List<QuizBank>) {
+    // 轻量签名：条数 + 首尾记录 id。记录增删都会变，比哈希整个列表便宜。
+    val signature = Triple(records.size, records.firstOrNull()?.id, records.lastOrNull()?.id)
+    var rows by remember(signature) { mutableStateOf<List<BankAccuracyRow>?>(null) }
+    LaunchedEffect(signature) {
+        rows = withContext(Dispatchers.Default) { StudyStats.byBank(records, banks) }
+    }
+
+    GlassCard {
+        Text(
+            text = "按题库正确率",
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.SemiBold
+        )
+        Spacer(Modifier.height(4.dp))
+        val loaded = rows
+        when {
+            loaded == null -> Text(
+                text = "正在统计…",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            loaded.isEmpty() -> Text(
+                text = "还没有带逐题明细的记录，练一场就会出现统计。",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            else -> {
+                val (totalAnswered, totalCorrect) = StudyStats.totals(loaded)
+                val totalAccuracy = if (totalAnswered == 0) 0 else totalCorrect * 100 / totalAnswered
+                Text(
+                    text = "${loaded.size} 个题库 · $totalAnswered 题 · 总正确率 $totalAccuracy%",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(Modifier.height(10.dp))
+                loaded.groupBy { it.groupName }.forEach { (groupName, groupRows) ->
+                    val groupAnswered = groupRows.sumOf { it.answered }
+                    Text(
+                        text = groupName,
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Spacer(Modifier.height(6.dp))
+                    groupRows.forEach { row ->
+                        BankAccuracyLine(row = row)
+                        Spacer(Modifier.height(8.dp))
+                    }
+                    Text(
+                        text = "小计 $groupAnswered 题",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(Modifier.height(10.dp))
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun BankAccuracyLine(row: BankAccuracyRow) {
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                text = row.bankName,
+                style = MaterialTheme.typography.bodyMedium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f)
+            )
+            Text(
+                text = "${row.answered} 题 · ${row.accuracy}%",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        Spacer(Modifier.height(4.dp))
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(4.dp)
+                .background(ShirohaColors.LineSoft)
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth((row.accuracy / 100f).coerceIn(0f, 1f))
+                    .height(4.dp)
+                    .background(MaterialTheme.colorScheme.primary)
+            )
+        }
+        if (row.lastTimestamp > 0L) {
+            Spacer(Modifier.height(3.dp))
+            Text(
+                text = "最近 ${formatRecordTime(row.lastTimestamp)}",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+    }
 }
