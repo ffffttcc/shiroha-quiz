@@ -95,7 +95,7 @@ class SyncEngine(
             client.putSyncObject(SyncObjects.MANIFEST, SyncManifestCodec.encrypt(merged, recoveryCode))
 
             // ⑤ 记录状态 + 回收不再被引用的 blob
-            state.markSynced(at, message(uploaded, downloaded, conflicts), metaOf(merged))
+            state.markSynced(at, "上传 $uploaded / 下载 $downloaded / 冲突 $conflicts · 成功", metaOf(merged))
             runCatching { collectGarbage(merged) }
 
             Report(true, uploaded, downloaded, conflicts, message(uploaded, downloaded, conflicts))

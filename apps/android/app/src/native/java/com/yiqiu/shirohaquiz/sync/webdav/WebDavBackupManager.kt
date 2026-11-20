@@ -79,6 +79,26 @@ class WebDavBackupManager private constructor(
      */
     suspend fun recoveryCode(): String = withContext(Dispatchers.IO) { recoveryCodes.ensure() }
 
+    /**
+     * 跑一次增量同步。全部网络与写盘都在 IO；失败不写本地、不更新 last_sync_at。
+     * 状态由 SyncEngine 在成功后落盘，UI 读 SyncStateStore 展示。
+     */
+    suspend fun syncNow(): com.yiqiu.shirohaquiz.sync.sync.SyncEngine.Report = withContext(Dispatchers.IO) {
+        val client = clientForSavedSettings()
+        val store = com.yiqiu.shirohaquiz.sync.sync.SyncStateStore(appContext)
+        val engine = com.yiqiu.shirohaquiz.sync.sync.SyncEngine(
+            client = client,
+            recoveryCode = recoveryCodes.ensure(),
+            state = store,
+            localBanks = { QuizRepository.banks.toList() },
+            applyRemoteBank = { groupName, name, questions ->
+                QuizRepository.applySyncedBank(appContext, groupName, name, questions)
+            },
+            renameLocalBank = { bankId, newName -> QuizRepository.renameBank(appContext, bankId, newName) }
+        )
+        engine.run()
+    }
+
     @Synchronized fun hasRecoveryCode(): Boolean = recoveryCodes.existing() != null
 
     /** Settings cannot change the origin/account of an in-flight request or prepared restore. */

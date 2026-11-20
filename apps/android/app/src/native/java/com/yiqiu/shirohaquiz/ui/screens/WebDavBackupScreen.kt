@@ -30,6 +30,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import com.yiqiu.shirohaquiz.security.BackupEncryption
+import com.yiqiu.shirohaquiz.sync.sync.SyncScheduler
+import com.yiqiu.shirohaquiz.sync.sync.SyncStateStore
 import com.yiqiu.shirohaquiz.sync.webdav.*
 import com.yiqiu.shirohaquiz.ui.components.GlassCard
 import com.yiqiu.shirohaquiz.ui.components.NoticeCard
@@ -63,6 +65,12 @@ fun WebDavBackupScreen(onBack: () -> Unit) {
     var restoreMode by remember { mutableStateOf(WebDavRestoreMode.IMPORT_COPY) }
     var confirmOverwrite by remember { mutableStateOf(false) }
     var saveFileName by remember { mutableStateOf("shiroha_cloud_backup.zip") }
+    val syncStore = remember { SyncStateStore(context) }
+    var syncEnabled by remember { mutableStateOf(syncStore.isEnabled()) }
+    var syncInterval by remember { mutableStateOf(syncStore.intervalMinutes()) }
+    var syncWifiOnly by remember { mutableStateOf(syncStore.wifiOnly()) }
+    var lastSyncAt by remember { mutableStateOf(syncStore.lastSyncAt()) }
+    var lastSyncResult by remember { mutableStateOf(syncStore.lastSyncResult()) }
     var encryptionEnabled by remember { mutableStateOf(manager.isEncryptionEnabled()) }
     var recoveryCode by remember { mutableStateOf<String?>(null) }
     val clipboard = LocalClipboardManager.current
@@ -184,6 +192,58 @@ fun WebDavBackupScreen(onBack: () -> Unit) {
             }) { Text(if (manager.hasRecoveryCode()) "查看恢复码" else "生成恢复码") }
             Text("恢复码丢失后，已加密上传的云端备份将永久无法解密，也无法找回。",
                 style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+        }
+        GlassCard {
+            Text("自动同步", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
+            Text("后台按设定间隔增量同步题库：只传内容变过的库，失败不会改动本地数据。",
+                style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Checkbox(syncEnabled, { checked ->
+                    syncEnabled = checked
+                    syncStore.setEnabled(checked)
+                    SyncScheduler.schedule(context, syncStore)
+                    message = if (checked) "已开启自动同步。" else "已关闭自动同步。"
+                }, enabled = !busy)
+                Text("开启自动同步", style = MaterialTheme.typography.bodyMedium)
+            }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Checkbox(syncWifiOnly, { checked ->
+                    syncWifiOnly = checked
+                    syncStore.setWifiOnly(checked)
+                    SyncScheduler.schedule(context, syncStore)
+                }, enabled = !busy && syncEnabled)
+                Text("仅在 Wi-Fi 下同步", style = MaterialTheme.typography.bodyMedium)
+            }
+            Text("同步频率", style = MaterialTheme.typography.bodyMedium)
+            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                listOf(15 to "15 分钟", 30 to "30 分钟", 60 to "60 分钟", 0 to "仅手动").forEach { (minutes, label) ->
+                    TextButton(enabled = !busy && syncEnabled, onClick = {
+                        syncInterval = minutes
+                        syncStore.setIntervalMinutes(minutes)
+                        SyncScheduler.schedule(context, syncStore)
+                    }) { Text(if (minutes == syncInterval) "· $label" else label) }
+                }
+            }
+            val syncStamp = if (lastSyncAt > 0) {
+                SimpleDateFormat("MM-dd HH:mm", Locale.CHINA).format(Date(lastSyncAt))
+            } else {
+                "从未同步"
+            }
+            Text("上次同步 $syncStamp · ${lastSyncResult ?: "无记录"}",
+                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            TextButton(enabled = !busy, onClick = {
+                scope.launch {
+                    message = "正在同步…"
+                    val report = manager.syncNow()
+                    lastSyncAt = syncStore.lastSyncAt()
+                    lastSyncResult = syncStore.lastSyncResult()
+                    message = if (report.ok) {
+                        "同步完成：上传 ${report.uploaded} / 下载 ${report.downloaded} / 冲突 ${report.conflicts}。"
+                    } else {
+                        "同步失败：${report.message}"
+                    }
+                }
+            }) { Text("立即同步") }
         }
         GlassCard {
             Text("云端备份 · ${entries.size} 份", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
