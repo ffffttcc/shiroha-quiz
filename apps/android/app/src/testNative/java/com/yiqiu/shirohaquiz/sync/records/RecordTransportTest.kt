@@ -82,16 +82,16 @@ class RecordTransportTest {
         val payload = RecordShard.encode(events(5))
         val shardHash = RecordShard.hash(payload)
         val encrypted = SyncPayloadCipher.encrypt(
-            payload, "RECOVERY-CODE-FOR-TEST", SyncPayloadCipher.aadForContent(shardHash)
+            payload, "ABCDEFGHJKLMNPQRSTUVWXYZ23456789", SyncPayloadCipher.aadForContent(shardHash)
         )
         val plain = SyncPayloadCipher.decrypt(
-            encrypted, "RECOVERY-CODE-FOR-TEST", SyncPayloadCipher.aadForContent(shardHash)
+            encrypted, "ABCDEFGHJKLMNPQRSTUVWXYZ23456789", SyncPayloadCipher.aadForContent(shardHash)
         )
         assertEquals(payload.toList(), plain.toList())
 
         val otherHash = "%064x".format(999)
         assertThrows(Exception::class.java) {
-            SyncPayloadCipher.decrypt(encrypted, "RECOVERY-CODE-FOR-TEST", SyncPayloadCipher.aadForContent(otherHash))
+            SyncPayloadCipher.decrypt(encrypted, "ABCDEFGHJKLMNPQRSTUVWXYZ23456789", SyncPayloadCipher.aadForContent(otherHash))
         }
     }
 
@@ -171,8 +171,8 @@ class RecordTransportTest {
     @Test
     fun encryptedManifestStillDecrypts() {
         val manifest = SyncManifest("dev-3", 300L, emptyMap(), epoch = 5L, recordShards = listOf("%064x".format(8)))
-        val encrypted = SyncManifestCodec.encrypt(manifest, "RECOVERY-CODE-FOR-TEST")
-        val decrypted = SyncManifestCodec.decrypt(encrypted, "RECOVERY-CODE-FOR-TEST")
+        val encrypted = SyncManifestCodec.encrypt(manifest, "ABCDEFGHJKLMNPQRSTUVWXYZ23456789")
+        val decrypted = SyncManifestCodec.decrypt(encrypted, "ABCDEFGHJKLMNPQRSTUVWXYZ23456789")
         assertEquals(5L, decrypted.epoch)
         assertEquals(1, decrypted.recordShards.size)
     }
