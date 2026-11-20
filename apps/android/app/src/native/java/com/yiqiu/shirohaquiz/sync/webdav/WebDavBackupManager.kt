@@ -510,7 +510,10 @@ class WebDavBackupManager private constructor(
         }
     }
 
-    private fun clientForSavedSettings(): WebDavClient = clientFactory(settingsStore.load().validated(), settingsStore.credentials())
+    // TODO(test/webdav-clear)：仅测试分支让 debug 包放行明文 http（BuildConfig.DEBUG）；
+    //   合入主线前删除该传参，恢复默认拒绝。
+    private fun clientForSavedSettings(): WebDavClient =
+        clientFactory(settingsStore.load().validated(allowInsecureHttp = BuildConfig.DEBUG), settingsStore.credentials())
 
     @Synchronized private fun invalidatePrepared() {
         preparedFile?.delete()
@@ -638,7 +641,13 @@ class WebDavBackupManager private constructor(
             hooks: WebDavBackupHooks = nativeHooks(),
             settingsStore: WebDavSettingsStore = WebDavSettingsStore(context),
             clientFactory: (WebDavSettings, WebDavCredentials) -> WebDavClient = { settings, credentials ->
-                WebDavClient(settings.baseUrl, settings.remoteDirectory, credentials)
+                // TODO(test/webdav-clear)：仅测试分支让 debug 包放行明文 http；合入主线前删除该传参。
+                WebDavClient(
+                    settings.baseUrl,
+                    settings.remoteDirectory,
+                    credentials,
+                    allowInsecureHttp = BuildConfig.DEBUG
+                )
             }
         ): WebDavBackupManager = instance ?: synchronized(this) {
             instance ?: WebDavBackupManager(

@@ -39,9 +39,11 @@ class WebDavClient(
     httpClient: OkHttpClient = OkHttpClient(),
     callFactory: Call.Factory? = null,
     private val maxBackupBytes: Long = DEFAULT_MAX_BACKUP_BYTES,
-    private val xmlParserFactory: () -> XmlPullParser = { XmlPullParserFactory.newInstance().newPullParser() }
+    private val xmlParserFactory: () -> XmlPullParser = { XmlPullParserFactory.newInstance().newPullParser() },
+    // TODO(test/webdav-clear)：仅测试分支放行明文 http，默认拒绝；合入主线前删除该参数。
+    allowInsecureHttp: Boolean = false
 ) {
-    private val base = WebDavPaths.baseUrl(baseUrl)
+    private val base = WebDavPaths.baseUrl(baseUrl, allowInsecureHttp = allowInsecureHttp)
     private val directoryParts = WebDavPaths.directory(remoteDirectory).trim('/').split('/')
     private val directoryUrl = collectionUrl(directoryParts)
     private val transport: Call.Factory = callFactory ?: httpClient.newBuilder()
