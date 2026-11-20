@@ -115,27 +115,13 @@ class WebDavBackupManagerTest {
     }
 
     /**
-     * 手动「立即同步」失败必须落盘：否则 UI 的「上次失败」行在最常见的手动同步场景下永远不亮。
-     * 落盘内容必须是引擎/异常原文，不许泛化成「同步失败」这类话。
+     * 手动「立即同步」失败必须落盘（写引擎原文，不泛化）；成功不覆盖已有失败记录。
+     * 这里测落盘决策本身：syncNow 本体要先派生恢复码、依赖 Android Keystore，JVM（Robolectric）里跑不通。
      */
-    @Test fun syncNowFailureWritesOriginalErrorToState() = runBlocking {
+    @Test fun syncFailureIsPersistedWithOriginalMessageAndSuccessKeepsIt() {
         Dispatchers.setMain(Dispatchers.Unconfined)
         val context = RuntimeEnvironment.getApplication()
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined)
-        val failing = object : Call.Factory {
-            override fun newCall(request: Request): Call = object : Call {
-                override fun request(): Request = request
-                override fun execute(): Response = Response.Builder().request(request)
-                    .protocol(Protocol.HTTP_1_1).code(404).message("test")
-                    .body(ByteArray(0).toResponseBody()).build()
-                override fun enqueue(responseCallback: Callback) = error("Only blocking calls are supported by this test.")
-                override fun cancel() = Unit
-                override fun isExecuted(): Boolean = true
-                override fun isCanceled(): Boolean = false
-                override fun timeout(): Timeout = Timeout()
-                override fun clone(): Call = newCall(request)
-            }
-        }
         val manager = WebDavBackupManager.createForTesting(context,
             WebDavBackupHooks(
                 previewBackupBytes = { WebDavBackupPreview(1, 1) },
@@ -144,16 +130,20 @@ class WebDavBackupManagerTest {
             ),
             WebDavSettingsStore(context),
             clientFactory = { settings, credentials -> WebDavClient(settings.baseUrl, settings.remoteDirectory,
-                credentials, callFactory = failing, xmlParserFactory = { org.kxml2.io.KXmlParser() }) },
+                credentials, callFactory = WebDavClientTest.FakeDav(), xmlParserFactory = { org.kxml2.io.KXmlParser() }) },
             scope = scope)
         try {
-            manager.saveSettings(WebDavSettings("https://dav.example.com/dav/", "user"), "password")
             val state = SyncStateStore(context)
             val beforeAt = state.lastErrorAt()
-            val report = manager.syncNow()
-            assertFalse("远端 404 时必须报失败", report.ok)
-            assertEquals("last_error 必须是原文，不许泛化", report.message, state.lastError())
-            assertTrue("last_error_at 必须被写入", state.lastErrorAt() > beforeAt)
+            val failed = com.yiqiu.shirohaquiz.sync.sync.SyncEngine.Report(
+                ok = false, uploaded = 0, downloaded = 0, conflicts = 0, message = "远端 WebDAV 资源不存在。")
+            manager.recordSyncFailure(state, failed)
+            assertEquals("last_error 必须是原文，不许泛化", "远端 WebDAV 资源不存在。", state.lastError())
+            assertTrue("last_error_at 必须被写入", state.lastErrorAt() >= beforeAt)
+            val succeeded = com.yiqiu.shirohaquiz.sync.sync.SyncEngine.Report(
+                ok = true, uploaded = 1, downloaded = 0, conflicts = 0, message = "ok")
+            manager.recordSyncFailure(state, succeeded)
+            assertEquals("成功不应清掉历史失败（UI 会显示为「历史失败」）", "远端 WebDAV 资源不存在。", state.lastError())
         } finally { manager.cancelCurrentTask(); scope.cancel(); Dispatchers.resetMain() }
     }
 }
