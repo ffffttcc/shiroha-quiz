@@ -80,11 +80,8 @@ fun BankListScreen(
     var moveTarget by remember { mutableStateOf<QuizBank?>(null) }
     var moveGroupText by remember { mutableStateOf(DEFAULT_BANK_GROUP_NAME) }
     var deleteTarget by remember { mutableStateOf<QuizBank?>(null) }
-    // 分组默认收起；仅当前题库所在分组默认展开（当前题库取不到则全部收起）
-    val activeBankGroup = activeBank?.groupName?.ifBlank { DEFAULT_BANK_GROUP_NAME }
-    var expandedGroups by rememberSaveable {
-        mutableStateOf(activeBankGroup?.let { listOf(it) } ?: emptyList())
-    }
+    // 分组一律默认收起（含当前题库所在分组）；用户手点后由 rememberSaveable 记住。
+    var expandedGroups by rememberSaveable { mutableStateOf<List<String>>(emptyList()) }
 
     if (editTarget != null) {
         AlertDialog(
