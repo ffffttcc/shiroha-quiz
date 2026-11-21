@@ -287,7 +287,7 @@ fun WebDavBackupScreen(onBack: () -> Unit) {
         }
         GlassCard {
             Text("完整备份 · ${entries.size} 份", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
-            Text("这里只统计完整备份（Backups/ 目录）。增量同步的题库与记录存在 shiroha-sync/，不计入本列表——显示 0 份不代表同步没生效。",
+            Text("这里只统计 Backups/ 下的完整备份包。增量同步对象（shiroha-sync- 前缀：manifest / bank / record 分片）与它们同目录，但不在本列表计数——显示 0 份不代表同步没生效。",
                 style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             if (entries.isEmpty()) Text("点击刷新读取远程备份。首次使用时，请先测试连接并创建备份目录。")
             entries.forEach { entry ->
