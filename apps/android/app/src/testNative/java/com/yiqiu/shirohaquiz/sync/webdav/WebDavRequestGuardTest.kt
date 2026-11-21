@@ -31,7 +31,10 @@ class WebDavRequestGuardTest {
         val error = assertThrows(IllegalArgumentException::class.java) {
             client("http://101.133.165.33:18080/")
         }
-        assertTrue("消息应指向协议：${error.message}", error.message.orEmpty().contains("协议"))
+        val message = error.message.orEmpty()
+        // 明文 http 在前缀白名单那一步就被拒（消息「仅支持 HTTPS 地址」），
+        // 也可能走到后面的协议判据（消息含「协议」）——两者都算协议性拒绝。
+        assertTrue("消息应指向协议/HTTPS：$message", message.contains("协议") || message.contains("HTTPS"))
     }
 
     /** 用例 2（对应原「默认拒绝」）：https 同源可以正常发出 PROPFIND。 */
