@@ -87,10 +87,13 @@ class WebDavBackupManager private constructor(
     suspend fun syncNow(): com.yiqiu.shirohaquiz.sync.sync.SyncEngine.Report = withContext(Dispatchers.IO) {
         val client = clientForSavedSettings()
         val store = com.yiqiu.shirohaquiz.sync.sync.SyncStateStore(appContext)
-        val engine = com.yiqiu.shirohaquiz.sync.sync.SyncEngine(
+        // 记录事件必须注入：漏了就会「同步成功但记录片 +0」（本工程第三次同类事故）。
+        val recordStore = com.yiqiu.shirohaquiz.sync.records.RecordEventStore.forContext(appContext)
+        val engine = com.yiqiu.shirohaquiz.sync.sync.buildSyncEngine(
             client = client,
             recoveryCode = recoveryCodes.ensure(),
             state = store,
+            recordStore = recordStore,
             localBanks = { QuizRepository.banks.toList() },
             applyRemoteBank = { groupName, name, questions ->
                 QuizRepository.applySyncedBank(appContext, groupName, name, questions)

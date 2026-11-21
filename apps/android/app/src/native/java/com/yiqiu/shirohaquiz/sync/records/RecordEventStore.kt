@@ -127,6 +127,57 @@ class RecordEventStore(
         return true
     }
 
+    /**
+     * 落地远端事件：**按 `eventId` 去重追加**（幂等）。远端事件自带 id，
+     * 不能走 [append]（那会按本机参数重算 id，等于换了一条事件）。
+     */
+    fun appendRemote(events: List<StudyEvent>): Int {
+        if (events.isEmpty()) return 0
+        val known = loadAll().mapTo(HashSet()) { it.eventId }
+        var appended = 0
+        events.forEach { event ->
+            if (!known.add(event.eventId)) return@forEach
+            appendDurably(eventsFile, Base64.getEncoder().encodeToString(RecordShard.encode(listOf(event))))
+            appended++
+        }
+        return appended
+    }
+
+    /**
+     * 落地远端 tombstone：按 `(epoch, deviceId)` 取并集，**不许覆盖本地更新的那条**。
+     * 只有远端那条严格更新时才追加写入，本地 epoch 计数器同时抬到不低于远端值。
+     */
+    fun applyRemoteTombstones(tombstones: List<Tombstone>): Int {
+        if (tombstones.isEmpty()) return 0
+        val local = loadTombstones()
+        val localByKey = local.associateBy { it.kind to it.targetKey }
+        var applied = 0
+        tombstones.forEach { remote ->
+            val current = localByKey[remote.kind to remote.targetKey]
+            if (current == null || RecordMerge.compareTombstone(remote, current) > 0) {
+                appendDurably(
+                    tombstonesFile,
+                    listOf(
+                        remote.kind.name,
+                        remote.targetKey,
+                        remote.epoch.toString(),
+                        remote.deviceId,
+                        remote.deleted.toString()
+                    ).joinToString("|")
+                )
+                applied++
+            }
+            if (remote.epoch > rawEpoch()) rawEpoch(remote.epoch)
+        }
+        return applied
+    }
+
+    private fun rawEpoch(): Long = epochFile.takeIf { it.exists() }?.readText()?.trim()?.toLongOrNull() ?: 0L
+
+    private fun rawEpoch(value: Long) {
+        epochFile.writeText(value.toString())
+    }
+
     private fun eventId(questionKey: String, answeredAt: Long, correct: Boolean): String =
         MessageDigest.getInstance("SHA-256")
             .digest("shiroha-evt-v1\u0000$deviceId\u0000$questionKey\u0000$answeredAt\u0000$correct".toByteArray())
