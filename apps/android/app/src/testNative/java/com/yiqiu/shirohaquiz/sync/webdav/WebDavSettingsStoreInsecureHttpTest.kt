@@ -10,49 +10,52 @@ import org.robolectric.RuntimeEnvironment
 import org.robolectric.annotation.Config
 
 /**
- * test/webdav-clear 分支专用：验证明文放行真的贯穿到 store 层
- * （`save()` / `load()` / `credentials()`），而不只是 `WebDavPaths` 那一层。
+ * `WebDavSettingsStore` 层的协议闸门：主线只允许 https，且恢复「必须有密码」的主线语义。
  *
- * 默认边界两条都测：显式 true 才放行，显式 false 必须仍被拒。
+ * 历史：从 `test/webdav-clear` 带过来时，这里验的是「allow=true 时 http 也能 save/load/credentials」，
+ * 以及「无密码时回落 test-only 占位口令」。两处都是试验专用，flag 与占位口令已一并删除，
+ * 用例按含义改写，没有删文件。
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [28])
 class WebDavSettingsStoreInsecureHttpTest {
 
-    private val plainHttp = "http://101.133.165.33:18080/"
+    private val httpsUrl = "https://101.133.165.33:18080/"
 
-    /** 显式放行：save 不抛、load 拿回 http、credentials 不再抛（死结就在这里）。 */
+    /** 用例 1（对应原「allow=true 时 http 可 save」）：现在 http 在 save 阶段就被拒。 */
     @Test
-    fun allowInsecureHttpTrueLetsSaveLoadAndCredentialsUsePlainHttp() {
+    fun plainHttpSettingsAreRejectedOnSave() {
         val store = WebDavSettingsStore(RuntimeEnvironment.getApplication())
+        val error = assertThrows(IllegalArgumentException::class.java) {
+            store.save(WebDavSettings(baseUrl = "http://101.133.165.33:18080/", username = "test"), password = "secret")
+        }
+        val message = error.message.orEmpty()
+        assertTrue("消息应指向协议/HTTPS：$message", message.contains("协议") || message.contains("HTTPS"))
+    }
 
-        val saved = store.save(
-            WebDavSettings(baseUrl = plainHttp, username = "test"),
-            password = "secret",
-            allowInsecureHttp = true
-        )
-        assertTrue("save 应保留 http: ${saved.baseUrl}", saved.baseUrl.startsWith("http://"))
+    /** 用例 2（对应原「放行时 save/load/credentials 走通」）：https 全链仍然可用。 */
+    @Test
+    fun httpsSettingsRoundTripAndCredentialsWork() {
+        val store = WebDavSettingsStore(RuntimeEnvironment.getApplication())
+        val saved = store.save(WebDavSettings(baseUrl = httpsUrl, username = "test"), password = "secret")
+        assertTrue("save 应保留 https：${saved.baseUrl}", saved.baseUrl.startsWith("https://"))
 
         val loaded = store.load()
-        assertTrue("load 应仍是 http: ${loaded.baseUrl}", loaded.baseUrl.startsWith("http://"))
+        assertTrue("load 应仍是 https：${loaded.baseUrl}", loaded.baseUrl.startsWith("https://"))
 
-        val credentials = store.credentials(allowInsecureHttp = true)
+        val credentials = store.credentials()
         assertEquals("test", credentials.username)
     }
 
-    /** 默认边界不破：显式 false 时同一 http 地址在 save() 仍必须被拒。 */
+    /**
+     * 用例 3（对应原「无密码回落 test-only 占位口令」）：
+     * 主线语义已恢复为「没有密码就抛 WebDavException」，绝不再用占位口令冒充真实凭据。
+     */
     @Test
-    fun allowInsecureHttpFalseStillRejectsPlainHttpOnSave() {
+    fun credentialsWithoutPasswordThrowsInsteadOfFallingBack() {
         val store = WebDavSettingsStore(RuntimeEnvironment.getApplication())
-
-        val error = assertThrows(IllegalArgumentException::class.java) {
-            store.save(
-                WebDavSettings(baseUrl = plainHttp, username = "test"),
-                password = "secret",
-                allowInsecureHttp = false
-            )
-        }
-        val message = error.message.orEmpty()
-        assertTrue("应指向协议: $message", message.contains("协议"))
+        store.save(WebDavSettings(baseUrl = httpsUrl, username = "test", rememberPassword = false), password = null)
+        val error = assertThrows(WebDavException::class.java) { store.credentials() }
+        assertTrue("应提示缺少密码：${error.message}", error.message.orEmpty().contains("密码"))
     }
 }

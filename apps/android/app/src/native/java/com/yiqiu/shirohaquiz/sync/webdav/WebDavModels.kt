@@ -19,9 +19,8 @@ data class WebDavSettings(
     val remoteDirectory: String = DEFAULT_REMOTE_DIRECTORY,
     val rememberPassword: Boolean = false
 ) {
-    // TODO(test/webdav-clear)：`allowInsecureHttp` 只为测试分支透传，合入主线前删除该参数。
-    fun validated(allowInsecureHttp: Boolean = false): WebDavSettings {
-        val url = WebDavPaths.baseUrl(baseUrl, allowInsecureHttp = allowInsecureHttp)
+    fun validated(): WebDavSettings {
+        val url = WebDavPaths.baseUrl(baseUrl)
         require(username.isNotBlank() && ':' !in username && username.none { it.isISOControl() }) {
             "WebDAV 用户名为空或格式无效。"
         }
@@ -203,26 +202,16 @@ internal object WebDavPaths {
         "shiroha-quiz-backup-(\\d{8}-\\d{9})-([a-f0-9]{32})-(android|web)-v([A-Za-z0-9._-]+)-sha256-([a-f0-9]{64})\\.(zip|json)(\\.enc)?"
     )
 
-    /**
-     * TODO(test/webdav-clear)：`allowInsecureHttp` 仅 test/webdav-clear 测试分支使用。
-     *   合入主线前必须删除该参数，恢复为 `require(url.isHttps) { "WebDAV 仅支持 HTTPS 地址。" }`。
-     *
-     * 默认 false = 与主线行为完全一致（http 必拒）；userinfo 判据与该参数无关，恒定生效。
-     */
-    fun baseUrl(text: String, allowInsecureHttp: Boolean = false): HttpUrl {
+    /** 只接受 https 地址：明文 http 在解析阶段就被拒（主线语义，任何构建都一样）。 */
+    fun baseUrl(text: String): HttpUrl {
         val trimmed = text.trim()
-        // 前缀白名单：http/https 都先放到这里做解析；真正的协议闸门是下方条件化的
-        // isHttps 判据——allowInsecureHttp = false 时 http 依旧会被拒，并非无条件放行。
-        require(trimmed.startsWith("https://", true) || trimmed.startsWith("http://", true)) { "WebDAV 仅支持 HTTPS 地址。" }
+        require(trimmed.startsWith("https://", true)) { "WebDAV 仅支持 HTTPS 地址。" }
         val uri = runCatching { java.net.URI(trimmed) }.getOrNull()
             ?: throw IllegalArgumentException("WebDAV 地址无效。")
-        // 凭据判据放在最前，且与 allowInsecureHttp 无关：任何取值下都不许内嵌账号密码。
         require(uri.rawUserInfo == null) { "WebDAV 地址内嵌凭据：username/password 必须为空" }
         require(uri.rawQuery == null && uri.rawFragment == null) { "WebDAV 地址不得包含查询串或片段" }
         val url = trimmed.toHttpUrlOrNull() ?: throw IllegalArgumentException("WebDAV 地址无效。")
-        require(url.isHttps || (allowInsecureHttp && url.scheme == "http")) {
-            "WebDAV 协议不合：需要 https${if (allowInsecureHttp) " 或 http" else ""}，当前为：${url.scheme}"
-        }
+        require(url.isHttps) { "WebDAV 协议不合：需要 https，当前为：${url.scheme}" }
         require(url.username.isEmpty() && url.password.isEmpty()) {
             "WebDAV 地址内嵌凭据：username/password 必须为空"
         }

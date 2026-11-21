@@ -1,7 +1,6 @@
 package com.yiqiu.shirohaquiz.sync.webdav
 
 import android.content.Context
-import com.yiqiu.shirohaquiz.BuildConfig
 import com.yiqiu.shirohaquiz.security.SecureSecretStore
 
 /** Non-secret configuration is separate from QuizRepository preferences and exported content. */
@@ -18,21 +17,11 @@ class WebDavSettingsStore(context: Context, private val secrets: SecureSecretSto
     )
 
     /** Null retains the password only when the origin AND account are unchanged. Empty clears it. */
-    // TODO(test/webdav-clear)：`allowInsecureHttp` 默认取 BuildConfig.DEBUG（仅 debug 包放行明文），
-    //   合入主线前必须删除该参数并恢复为 `settings.validated()`。
-    @Synchronized fun save(
-        settings: WebDavSettings,
-        password: String? = null,
-        allowInsecureHttp: Boolean = BuildConfig.DEBUG
-    ): WebDavSettings {
-        val clean = settings.validated(allowInsecureHttp = allowInsecureHttp)
+    @Synchronized fun save(settings: WebDavSettings, password: String? = null): WebDavSettings {
+        val clean = settings.validated()
         val previous = load()
         val sameAccount = runCatching {
-            // TODO(test/webdav-clear)：与 save()/credentials() 口径一致，避免 http 配置下 sameAccount 被误判为 false。
-            WebDavPaths.sameOrigin(
-                WebDavPaths.baseUrl(previous.baseUrl, allowInsecureHttp = BuildConfig.DEBUG),
-                WebDavPaths.baseUrl(clean.baseUrl, allowInsecureHttp = BuildConfig.DEBUG)
-            ) &&
+            WebDavPaths.sameOrigin(WebDavPaths.baseUrl(previous.baseUrl), WebDavPaths.baseUrl(clean.baseUrl)) &&
                 previous.username == clean.username
         }.getOrDefault(false)
         val effective = password ?: if (sameAccount) loadPassword() else null
@@ -58,12 +47,9 @@ class WebDavSettingsStore(context: Context, private val secrets: SecureSecretSto
         secrets.get(PASSWORD_SECRET_KEY)
     } else sessionPassword
 
-    // TODO(test/webdav-clear)：死结点。`allowInsecureHttp` 默认取 BuildConfig.DEBUG，
-    //   合入主线前必须删除该参数并恢复为 `load().validated()`。
-    @Synchronized fun credentials(allowInsecureHttp: Boolean = BuildConfig.DEBUG): WebDavCredentials {
-        val settings = load().validated(allowInsecureHttp = allowInsecureHttp)
-        // TEST-ONLY（临时联调分支）：未存密码时用占位口令，便于无 UI 联调。
-        val password = loadPassword() ?: "test-only"
+    @Synchronized fun credentials(): WebDavCredentials {
+        val settings = load().validated()
+        val password = loadPassword() ?: throw WebDavException("请填写 WebDAV 密码或应用专用授权码。")
         return WebDavCredentials(settings.username, password)
     }
 

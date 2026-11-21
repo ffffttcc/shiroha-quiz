@@ -10,43 +10,44 @@ import org.junit.Test
 import java.lang.reflect.InvocationTargetException
 
 /**
- * test/webdav-clear 收官用例：证明「明文放行」只在 allowInsecureHttp=true 时生效，
- * 且同源判据没有被一起放开（这是最后一堵墙 `WebDavClient.request()` 的两条判据）。
+ * `WebDavClient.request()` 的两条判据：协议必须是 https、目标必须同源。
+ *
+ * 历史：从 `test/webdav-clear` 带过来时，这里验的是「显式放行 flag 时 http 同源可通过」。
+ * 合入主线后 flag 已删除，原「放行」用例改写为「构造阶段即拒绝」，同源用例（反射）保留原强度。
  */
 class WebDavRequestGuardTest {
 
-    private fun client(url: String, allowInsecureHttp: Boolean) = WebDavClient(
+    private fun client(url: String) = WebDavClient(
         url,
         "/ShirohaQuiz/Backups/",
-        WebDavCredentials("test", "test-only"),
+        WebDavCredentials("test", "test-only-password"),
         callFactory = WebDavClientTest.FakeDav(),
-        xmlParserFactory = { org.kxml2.io.KXmlParser() },
-        allowInsecureHttp = allowInsecureHttp
+        xmlParserFactory = { org.kxml2.io.KXmlParser() }
     )
 
-    /** 放行时：http + 同源 应能真正发出 PROPFIND（不再被 require 拦下）。 */
+    /** 用例 1（对应原「allow=true 时 http 同源可通过」）：现在构造阶段就拒绝明文 http。 */
     @Test
-    fun allowInsecureHttpTrueLetsSameOriginPlainHttpThrough() {
-        val resource = client("http://101.133.165.33:18080/", allowInsecureHttp = true).testConnection()
+    fun plainHttpIsRejectedAtConstruction() {
+        val error = assertThrows(IllegalArgumentException::class.java) {
+            client("http://101.133.165.33:18080/")
+        }
+        assertTrue("消息应指向协议：${error.message}", error.message.orEmpty().contains("协议"))
+    }
+
+    /** 用例 2（对应原「默认拒绝」）：https 同源可以正常发出 PROPFIND。 */
+    @Test
+    fun httpsSameOriginWorks() {
+        val resource = client("https://dav.example.com/dav/").testConnection()
         assertNotNull(resource)
     }
 
-    /** 默认拒绝：同一 http 地址在构造阶段就应被协议判据拦下，且消息指明协议。 */
-    @Test
-    fun allowInsecureHttpFalseRejectsPlainHttpWithProtocolMessage() {
-        val error = assertThrows(IllegalArgumentException::class.java) {
-            client("http://101.133.165.33:18080/", allowInsecureHttp = false)
-        }
-        assertTrue("消息应指向协议: ${error.message}", error.message.orEmpty().contains("协议"))
-    }
-
     /**
-     * 放行 http 不等于放行跨源：request() 的同源判据必须仍然生效。
-     * request() 是 private 且无公开入口能传入外部 URL，故用反射直达该判据。
+     * 用例 3（对应原「跨源必须抛」）：放行协议不等于放行跨源，request() 的同源判据必须仍生效。
+     * request() 是 private 且无公开入口能传外部 URL，故用反射直达该判据。
      */
     @Test
-    fun allowInsecureHttpTrueStillRejectsCrossOriginRequest() {
-        val target = client("http://101.133.165.33:18080/", allowInsecureHttp = true)
+    fun crossOriginRequestIsStillRejected() {
+        val target = client("https://dav.example.com/dav/")
         val method = WebDavClient::class.java.getDeclaredMethod(
             "request",
             HttpUrl::class.java,
@@ -57,7 +58,7 @@ class WebDavRequestGuardTest {
         val thrown = assertThrows(InvocationTargetException::class.java) {
             method.invoke(
                 target,
-                "http://cross.example.com:18080/ShirohaQuiz/Backups/".toHttpUrl(),
+                "https://cross.example.com/dav/".toHttpUrl(),
                 "PROPFIND",
                 null
             )
@@ -65,9 +66,6 @@ class WebDavRequestGuardTest {
         val cause = thrown.cause
         assertTrue("应抛 IllegalArgumentException，实际: $cause", cause is IllegalArgumentException)
         val message = cause?.message.orEmpty()
-        assertTrue(
-            "消息应指向越界/同源，实际: $message",
-            message.contains("越界") || message.contains("同源")
-        )
+        assertTrue("消息应指向越界/同源，实际: $message", message.contains("越界") || message.contains("同源"))
     }
 }

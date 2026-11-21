@@ -6,53 +6,49 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * test/webdav-clear 分支专用：验证「明文 HTTP 放行」是显式参数且默认拒绝。
+ * 主线协议闸门：**一律只允许 https**，明文 http 在任何构建里都被拒。
  *
- * 与 WebDavClientTest.rejectsHttpAndUnsafePaths 互不替代：那条守默认拒绝的线保持不变。
+ * 历史：这个文件从 `test/webdav-clear` 试验分支带过来时，验的是「显式放行 flag 时 http 可用」。
+ * 合入主线时 flag 已整条链路删除，因此原先 4 条用例按含义改写为下列断言，没有删文件。
  */
 class WebDavInsecureHttpGateTest {
 
-    /** 用例 1：显式放行时，明文 http 可用，且端口/结尾斜杠不被破坏。 */
+    /** 用例 1（对应原「allow=true 放行 http」）：明文 http 现在必须被拒。 */
     @Test
-    fun allowInsecureHttpAcceptsPlainHttp() {
-        val url = WebDavPaths.baseUrl("http://101.133.165.33:18080/", allowInsecureHttp = true)
-        assertEquals("http", url.scheme)
-        assertEquals(18080, url.port)
-        assertTrue("应以 / 结尾: $url", url.toString().endsWith("/"))
-    }
-
-    /** 用例 2：默认（false）对同一地址必须拒绝，且消息指向「协议」。 */
-    @Test
-    fun defaultRejectsPlainHttpWithProtocolMessage() {
+    fun plainHttpIsRejected() {
         val error = assertThrows(IllegalArgumentException::class.java) {
             WebDavPaths.baseUrl("http://101.133.165.33:18080/")
         }
         val message = error.message.orEmpty()
-        assertTrue("消息应指向协议: $message", message.contains("协议"))
+        assertTrue("消息应指向协议/HTTPS：$message", message.contains("协议") || message.contains("HTTPS"))
     }
 
-    /** 用例 3：放行 http 也不等于放行凭据——http 内嵌账号密码仍须拒，实由 rawUserInfo 判据拦下，消息指向「凭据」。 */
+    /** 用例 2（对应原「默认拒绝」）：https 正常通过，且端口与结尾斜杠不被破坏。 */
     @Test
-    fun allowInsecureHttpStillRejectsUserInfoOnPlainHttp() {
-        val error = assertThrows(IllegalArgumentException::class.java) {
-            WebDavPaths.baseUrl("http://u:p@dav.example.com/", allowInsecureHttp = true)
-        }
-        val message = error.message.orEmpty()
-        assertTrue("消息应指向凭据: $message", message.contains("凭据"))
+    fun httpsIsAccepted() {
+        val url = WebDavPaths.baseUrl("https://101.133.165.33:18080/")
+        assertEquals("https", url.scheme)
+        assertEquals(18080, url.port)
+        assertTrue("应以 / 结尾: $url", url.toString().endsWith("/"))
     }
 
-    /**
-     * 用例 4（承重用例）：allowInsecureHttp=true 且地址是 https 时，协议判据已经失效，
-     * 凭据防线只剩 URI 层面的 rawUserInfo 判据（WebDavModels.kt:219）能拦；
-     * 更靠后的 username/password 判据（:225）在这一步根本不会被命中。
-     * 这条挂掉说明凭据防线其实是空的。
-     */
+    /** 用例 3（对应原「allow=true 时 http+userinfo 仍拒」）：http 已一律拒，凭据判据在 https 上仍生效。 */
     @Test
-    fun allowInsecureHttpStillRejectsUserInfoOnHttps() {
+    fun userInfoOnHttpsIsStillRejected() {
         val error = assertThrows(IllegalArgumentException::class.java) {
-            WebDavPaths.baseUrl("https://u:p@dav.example.com/", allowInsecureHttp = true)
+            WebDavPaths.baseUrl("https://u:p@dav.example.com/")
         }
-        val message = error.message.orEmpty()
-        assertTrue("消息应指向凭据: $message", message.contains("凭据"))
+        assertTrue("消息应指向凭据：${error.message}", error.message.orEmpty().contains("凭据"))
+    }
+
+    /** 用例 4（对应原承重用例）：isHttps 为真时协议判据放行，但凭据判据必须独立拦住。 */
+    @Test
+    fun httpsWithCredentialsIsBlockedByCredentialRule() {
+        assertThrows(IllegalArgumentException::class.java) {
+            WebDavPaths.baseUrl("https://user:secret@dav.example.com/dav/")
+        }
+        // 同样输入去掉 userinfo 就必须能过，证明拦的是凭据而不是把 https 也误伤
+        val clean = WebDavPaths.baseUrl("https://dav.example.com/dav/")
+        assertEquals("https", clean.scheme)
     }
 }

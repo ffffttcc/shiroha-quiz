@@ -39,11 +39,9 @@ class WebDavClient(
     httpClient: OkHttpClient = OkHttpClient(),
     callFactory: Call.Factory? = null,
     private val maxBackupBytes: Long = DEFAULT_MAX_BACKUP_BYTES,
-    private val xmlParserFactory: () -> XmlPullParser = { XmlPullParserFactory.newInstance().newPullParser() },
-    // TODO(test/webdav-clear)：仅测试分支放行明文 http，默认拒绝；合入主线前删除该参数。
-    private val allowInsecureHttp: Boolean = false
+    private val xmlParserFactory: () -> XmlPullParser = { XmlPullParserFactory.newInstance().newPullParser() }
 ) {
-    private val base = WebDavPaths.baseUrl(baseUrl, allowInsecureHttp = allowInsecureHttp)
+    private val base = WebDavPaths.baseUrl(baseUrl)
     private val directoryParts = WebDavPaths.directory(remoteDirectory).trim('/').split('/')
     private val directoryUrl = collectionUrl(directoryParts)
     private val transport: Call.Factory = callFactory ?: httpClient.newBuilder()
@@ -508,8 +506,7 @@ class WebDavClient(
         require(WebDavPaths.sameOrigin(base, url)) {
             "WebDAV 请求越界：$url 不属于 $base 同源（超出同源范围）"
         }
-        // TODO(test/webdav-clear)：allowInsecureHttp 仅测试分支放行明文；默认 false 时行为与主线一致。
-        require(url.isHttps || allowInsecureHttp) {
+        require(url.isHttps) {
             "WebDAV 请求协议不合：需要 https，当前为：${url.scheme}"
         }
         return Request.Builder().url(url).method(method, body)
