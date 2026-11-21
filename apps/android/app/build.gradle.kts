@@ -1,5 +1,3 @@
-﻿import java.util.Properties
-
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
@@ -42,17 +40,10 @@ android {
             keyAlias = "androiddebugkey"
             keyPassword = "android"
         }
-        create("release") {
-            val props = Properties()
-            val propsFile = rootProject.file("keystore.properties")
-            if (propsFile.exists()) {
-                props.load(propsFile.inputStream())
-                storeFile = rootProject.file(props["storeFile"] as String)
-                storePassword = props["storePassword"] as String
-                keyAlias = props["keyAlias"] as String
-                keyPassword = props["keyPassword"] as String
-            }
-        }
+        // release 刻意复用同一把 debug keystore：
+        // 1) 与现有 debug 包**签名一致** → 正式包可直接 pm install -r 覆盖升级，不必卸载、不丢题库；
+        // 2) 仓库不提供 keystore.properties，原先那套「读 properties 再签名」在 CI 里等于没有签名配置。
+        // 真正的对外发布密钥不在仓库里，需要时另立 config，不要改写这里。
     }
 
     buildTypes {
@@ -60,7 +51,7 @@ android {
             signingConfig = signingConfigs.getByName("debug")
         }
         release {
-            signingConfig = signingConfigs.getByName("release")
+            signingConfig = signingConfigs.getByName("debug")
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(
