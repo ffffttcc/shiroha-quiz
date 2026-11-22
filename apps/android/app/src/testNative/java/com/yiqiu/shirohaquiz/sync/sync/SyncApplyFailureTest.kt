@@ -81,7 +81,10 @@ class SyncApplyFailureTest {
     fun applyFailureDoesNotReDownloadInSameRound() {
         seedOneBank()
         engine { _, _, _ -> false }.run()
-        val bankGets = dav.requests.count { it.method == "GET" && !it.url.encodedPath.endsWith("manifest.json") }
+        // manifest 对象名是 shiroha-sync-manifest.enc，不是 manifest.json
+        val gets = dav.requests.filter { it.method == "GET" }.map { it.url.encodedPath.substringAfterLast('/') }
+        val bankGets = gets.count { !it.startsWith(SyncObjects.MANIFEST) }
+        println("[DIAG] all GETs=$gets bankGets=$bankGets")
         assertEquals("同一轮只应下载一次", 1, bankGets)
     }
 
@@ -90,6 +93,7 @@ class SyncApplyFailureTest {
     fun applySuccessAdvances() {
         seedOneBank()
         val report = engine { _, _, _ -> true }.run()
+        println("[DIAG] ok=${report.ok} message=${report.message}")
         assertTrue("落盘成功应正常完成：${report.message}", report.ok)
     }
 }
