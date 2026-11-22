@@ -129,7 +129,7 @@ class SyncEngine(
                         ok = false,
                         uploaded = 0,
                         downloaded = downloaded,
-                        conflicts = conflicts,
+                        conflicts = 0,  // 冲突统计在下载循环之后才累加，此处必为 0
                         message = "题库「${decoded.name}」写入本地失败，已停止本轮同步（不会反复重下）。"
                     )
                 }
