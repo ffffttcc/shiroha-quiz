@@ -68,7 +68,19 @@ data class WebDavBackupEntry(
     val includesStudyRecords: Boolean? = null,
     val etag: String? = null
 ) {
-    val integrityAvailable: Boolean get() = sizeBytes > 0 && WebDavPaths.isSha256(sha256)
+    /**
+     * 是否可以安全下载。
+     *
+     * 口径（**加密与非加密不同，别再混用**）：
+     * - 非加密（.zip/.json）：必须有大小 + 明文 sha256，下载时两者都校验；
+     * - 加密（.zip.enc）：文件名里的 sha256 是**解密后明文**的摘要，不能拿来比密文，
+     *   因此这里只要求大小可用；密文完整性由 GCM 标签保证，明文完整性在解密后单独核对。
+     */
+    val integrityAvailable: Boolean
+        get() = sizeBytes > 0 && (WebDavPaths.isSha256(sha256) || WebDavPaths.isEncryptedName(fileName))
+
+    /** 下载时是否应该比对**密文**哈希：加密对象一律不比（比的是明文摘要，永远不等）。 */
+    val verifiesCiphertextHash: Boolean get() = WebDavPaths.isEncryptedName(fileName) == false
 
     internal fun toMetadataJson(): JSONObject = JSONObject()
         .put("app", "Shiroha Quiz")

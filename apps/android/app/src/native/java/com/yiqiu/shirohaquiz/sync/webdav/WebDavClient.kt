@@ -187,7 +187,10 @@ class WebDavClient(
             val result = withResponse(downloadRequest(entry.fileName, entry.etag), cancellation) { response ->
                 requireDownloadResponse(response, entry.sizeBytes)
                 FileOutputStream(destination).use { output ->
-                    val result = transfer(response.body!!.byteStream(), output, entry.sizeBytes, entry.sha256!!, cancellation, onProgress)
+                    // 加密对象不能拿**明文**摘要去比**密文**字节（永远不等）：
+                    // 下载只校验大小，密文完整性由 GCM 标签负责，明文摘要由解密后核对。
+                    val expectedSha256 = if (entry.verifiesCiphertextHash) entry.sha256!! else null
+                    val result = transfer(response.body!!.byteStream(), output, entry.sizeBytes, expectedSha256, cancellation, onProgress)
                     output.fd.sync()
                     result
                 }
@@ -494,7 +497,8 @@ class WebDavClient(
         input: InputStream,
         output: OutputStream?,
         expectedSize: Long,
-        expectedSha256: String,
+        /** null = 不比对哈希（仅用于加密对象：文件名里的摘要是明文摘要，与密文字节无关）。 */
+        expectedSha256: String?,
         cancellation: WebDavCancellation,
         onProgress: (Long, Long) -> Unit
     ): WebDavTransferResult {
@@ -516,8 +520,12 @@ class WebDavClient(
         }
         cancellation.throwIfCancelled()
         val sha = WebDavPaths.digestHex(digest.digest())
-        if (total != expectedSize || !WebDavPaths.equalSha256(sha, expectedSha256)) {
-            throw WebDavIntegrityException("备份 SHA256 摘要或完整文件大小校验失败。")
+        // 两层校验各司其职：这里只管「字节完整」（大小 + 非加密对象的字节哈希）；
+        // 加密对象的明文摘要由解密后核对（见 BackupMigration.verifyPlaintext）。
+        val hashOk = expectedSha256 == null || WebDavPaths.equalSha256(sha, expectedSha256)
+        if (total != expectedSize || !hashOk) {
+            val why = if (expectedSha256 == null) "完整文件大小校验失败" else "SHA256 摘要或完整文件大小校验失败"
+            throw WebDavIntegrityException("备份$why（期望 $expectedSize 字节，实际 $total 字节）。")
         }
         return WebDavTransferResult(total, sha)
     }

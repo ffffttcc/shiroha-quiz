@@ -686,7 +686,11 @@ class WebDavBackupManager private constructor(
                     tempFiles += dest
                     val entry = WebDavPaths.fallbackEntry(resource).copy(sizeBytes = size, sha256 = shaHex)
                     client.download(entry, dest)
-                    entries += com.yiqiu.shirohaquiz.sync.sync.BackupMigration.Entry(resource.fileName, dest.readBytes(), WebDavPaths.hexToBytes(shaHex))
+                    val raw = dest.readBytes()
+                    // 迁移同样核对明文（解开后立刻验，验不过就不覆盖上传）
+                    val openedForCheck = keys.openBackup(raw, WebDavPaths.hexToBytes(shaHex))
+                    com.yiqiu.shirohaquiz.sync.sync.BackupMigration.verifyPlaintext(openedForCheck.plaintext, shaHex)
+                    entries += com.yiqiu.shirohaquiz.sync.sync.BackupMigration.Entry(resource.fileName, raw, WebDavPaths.hexToBytes(shaHex))
                 }
             }
             val result = com.yiqiu.shirohaquiz.sync.sync.BackupMigration.migrate(
@@ -774,7 +778,10 @@ class WebDavBackupManager private constructor(
         val digest = WebDavPaths.hexToBytes(sha)
         // 双钥匙：先主钥匙（新版备份），失败回退旧恢复码（旧版备份）。逻辑统一在 SyncKeys 里。
         return try {
-            syncKeys().openBackup(raw, digest).plaintext
+            val opened = syncKeys().openBackup(raw, digest)
+            // 明文完整性：与文件名里的 sha256 逐字核对（加密对象下载阶段不比对密文哈希）。
+            com.yiqiu.shirohaquiz.sync.sync.BackupMigration.verifyPlaintext(opened.plaintext, entry.sha256)
+            opened.plaintext
         } catch (error: BackupDecryptException) {
             throw WebDavException(error.message ?: "这份备份是旧版本加密的，请在原设备升级后重新上传一份，或使用原恢复码。")
         }

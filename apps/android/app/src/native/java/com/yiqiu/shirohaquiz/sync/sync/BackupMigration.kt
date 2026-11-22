@@ -35,6 +35,24 @@ object BackupMigration {
         listOfNotNull(listedBytes, statBytes).firstOrNull { it > 0L }
 
     /**
+     * 解密后核对**明文**哈希是否与文件名里记录的一致（加密对象的明文完整性在这里守）。
+     *
+     * 为什么需要它：加密对象的文件名 sha256 是解密后 zip 的摘要，下载阶段不能拿它比密文
+     * （否则永远不等）；但也**不能因此不校验**——明文一旦被改，GCM 只能保证密文没被动，
+     * 所以解密出来必须再对一次摘要。
+     */
+    fun verifyPlaintext(plaintext: ByteArray, expectedShaHex: String?) {
+        if (expectedShaHex.isNullOrBlank()) return
+        val actual = java.security.MessageDigest.getInstance("SHA-256").digest(plaintext)
+            .joinToString("") { "%02x".format(it.toInt() and 0xFF) }
+        if (!actual.equals(expectedShaHex, ignoreCase = true)) {
+            throw com.yiqiu.shirohaquiz.sync.webdav.WebDavIntegrityException(
+                "解密后的内容与文件名记录的摘要不一致，这份备份可能已损坏或被改动。"
+            )
+        }
+    }
+
+    /**
      * @param upload 由调用方实现（覆盖写同名对象）
      */
     fun migrate(
