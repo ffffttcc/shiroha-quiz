@@ -115,7 +115,13 @@ class WebDavBackupManager private constructor(
             // 否则没有旧码的新设备永远解不开。成功才置标记，失败下一轮重试。
             var migrationNote = ""
             if (keys.hasLegacy && !store.keyMigrationDone()) {
-                val migration = engine.migrateAllToPrimaryKey()
+                // 迁移必须与 engine.run() 一样受单写者闸门保护：手点 + 定时任务同时触发时，
+                // 两轮迁移会并发写同一批对象，rclone 直接回 423「资源已被锁定」。
+                val migration = com.yiqiu.shirohaquiz.sync.sync.SyncWriteGate.withLock {
+                    engine.migrateAllToPrimaryKey { done, total ->
+                        store.setSyncProgress("正在迁移旧版加密对象：已迁移 $done/$total")
+                    }
+                }
                 if (migration.failedObject != null) {
                     store.recordFailure(migration.message)
                     return@withContext com.yiqiu.shirohaquiz.sync.sync.SyncEngine.Report(

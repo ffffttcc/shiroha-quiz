@@ -74,6 +74,10 @@ class SyncStateStore(context: Context) {
         if (candidate > epoch()) preferences.edit().putLong(KEY_EPOCH, candidate).apply()
     }
 
+    /** 迁移中间态进度：只更新展示文案，不动 last_sync_at 与基线（迁移还没完成）。 */
+    fun setSyncProgress(text: String) =
+        preferences.edit().putString(KEY_LAST_SYNC_RESULT, text).apply()
+
     /** 「所有云端对象是否已迁到凭据钥匙」的一次性标记（迁移成功才置位）。 */
     fun keyMigrationDone(): Boolean = preferences.getBoolean(KEY_KEY_MIGRATION_DONE, false)
 
