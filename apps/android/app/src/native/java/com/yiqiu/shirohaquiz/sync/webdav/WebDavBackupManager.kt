@@ -667,6 +667,7 @@ class WebDavBackupManager private constructor(
         val entries = mutableListOf<com.yiqiu.shirohaquiz.sync.sync.BackupMigration.Entry>()
         val tempFiles = mutableListOf<File>()
         val skipped = mutableListOf<String>()
+        val etags = mutableMapOf<String, String?>()
         try {
             encrypted.forEach { resource ->
                 val shaHex = SHA256_IN_NAME.find(resource.fileName)?.groupValues?.get(1)
@@ -685,6 +686,7 @@ class WebDavBackupManager private constructor(
                     val dest = newCacheFile("enc")
                     tempFiles += dest
                     val entry = WebDavPaths.fallbackEntry(resource).copy(sizeBytes = size, sha256 = shaHex)
+                    etags[resource.fileName] = resource.etag
                     client.download(entry, dest)
                     val raw = dest.readBytes()
                     // 迁移同样核对明文（解开后立刻验，验不过就不覆盖上传）
@@ -700,7 +702,14 @@ class WebDavBackupManager private constructor(
                     val out = newCacheFile("enc")
                     try {
                         out.writeBytes(bytes)
-                        client.uploadAtomic(out, fileName)
+                        // 迁移必须覆盖同名旧对象：MOVE 用 Overwrite: T；
+                        // 已知旧 etag 时先带 If-Match 做条件覆盖，服务端不支持会自动退回。
+                        client.uploadAtomic(
+                            source = out,
+                            fileName = fileName,
+                            overwrite = true,
+                            expectedEtag = etags[fileName]
+                        )
                     } finally {
                         out.delete()
                     }

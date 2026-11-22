@@ -100,11 +100,21 @@ class WebDavClient(
     }
 
     /** PUT never targets a final name. A complete read-back SHA256 precedes MOVE/Overwrite:F. */
+    /**
+     * @param overwrite false（默认，保守）：MOVE 用 `Overwrite: F`，目标已存在即失败——
+     *   普通「上传新备份」走这条，避免误覆盖别人的文件。
+     * @param overwrite true：**只给迁移用**，MOVE 用 `Overwrite: T` 覆盖同名对象；
+     *   失败时不删除目标旧文件（保持 `Overwrite: F` 时代的语义）。
+     * @param expectedEtag 覆盖前的一致性条件：非空时先带 `If-Match` 试，服务端不支持
+     *   （412/428）则退回无条件覆盖。
+     */
     fun uploadAtomic(
         source: File,
         fileName: String,
         cancellation: WebDavCancellation = WebDavCancellation(),
-        onProgress: (Long, Long) -> Unit = { _, _ -> }
+        onProgress: (Long, Long) -> Unit = { _, _ -> },
+        overwrite: Boolean = false,
+        expectedEtag: String? = null
     ): WebDavTransferResult {
         requireOwnedName(fileName)
         require(source.isFile && source.length() in 1..maxBackupBytes) { "待上传备份不存在、为空或超过大小限制。"
@@ -147,15 +157,24 @@ class WebDavClient(
             }
             verifyRemote(temporaryName, expected, cancellation)
             cancellation.throwIfCancelled()
-            val move = request(fileUrl(temporaryName), "MOVE").newBuilder()
-                .header("Destination", fileUrl(fileName).toString())
-                .header("Overwrite", "F")
-                .build()
-            withResponse(move, cancellation) { response ->
-                // 204 signifies replacement, which violates the immutable backup contract.
-                if (response.code != 201) failHttp(response.code)
-                moved = true
+            fun performMove(etag: String?): Int {
+                val builder = request(fileUrl(temporaryName), "MOVE").newBuilder()
+                    .header("Destination", fileUrl(fileName).toString())
+                    .header("Overwrite", if (overwrite) "T" else "F")
+                if (etag != null) builder.header("If-Match", etag)
+                return withResponse(builder.build(), cancellation) { response -> response.code }
             }
+
+            var moveCode = performMove(if (overwrite) expectedEtag else null)
+            if (overwrite && expectedEtag != null && moveCode in setOf(412, 428)) {
+                // 服务端不认目的地 If-Match：退回无条件覆盖（迁移场景宁可覆盖也别卡死）。
+                moveCode = performMove(null)
+            }
+            // 非覆盖：只有 201（新建）可接受，204 意味着替换，违反不可变约定；
+            // 覆盖：201 与 204 都算成功。
+            val acceptable = if (overwrite) setOf(201, 204) else setOf(201)
+            if (moveCode !in acceptable) failHttp(moveCode)
+            moved = true
             verifyRemote(fileName, expected, cancellation)
             return expected
         } finally {

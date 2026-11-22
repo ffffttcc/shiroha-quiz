@@ -109,8 +109,16 @@ class WebDavClientTest {
                 "GET" -> files[path]?.let { response(current, 200, it) } ?: response(current, 404, ByteArray(0))
                 "MOVE" -> {
                     val destination = HttpUrl.Builder().scheme("https").host("unused").build().resolve(current.header("Destination")!!)!!.encodedPath
-                    if (files.containsKey(destination)) response(current, 412, ByteArray(0))
-                    else { files[destination] = files.remove(path)!!; response(current, 201, ByteArray(0)) }
+                    // 尊重 Overwrite 头：F（默认，保守）目标已存在就 412；T（仅迁移用）允许覆盖，
+                    // 覆盖时按 RFC 返回 204。
+                    val allowsOverwrite = current.header("Overwrite")?.equals("T", ignoreCase = true) == true
+                    val exists = files.containsKey(destination)
+                    if (exists && !allowsOverwrite) {
+                        response(current, 412, ByteArray(0))
+                    } else {
+                        files[destination] = files.remove(path)!!
+                        response(current, if (exists) 204 else 201, ByteArray(0))
+                    }
                 }
                 "DELETE" -> { files.remove(path); response(current, 204, ByteArray(0)) }
                 "PROPFIND" -> {
