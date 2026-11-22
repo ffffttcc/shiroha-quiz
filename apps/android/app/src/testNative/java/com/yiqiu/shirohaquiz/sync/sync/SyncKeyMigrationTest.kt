@@ -46,7 +46,7 @@ class SyncKeyMigrationTest {
         declaredQuestionCount = { 0 },
         recordStore = null,
         localBanks = { emptyList() },
-        applyRemoteBank = { _, _, _ -> },
+        applyRemoteBank = { _, _, _ -> true },
         renameLocalBank = { _, _ -> }
     )
 

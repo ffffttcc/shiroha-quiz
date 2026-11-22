@@ -27,7 +27,7 @@ internal fun buildSyncEngine(
     declaredQuestionCount: (bankId: String) -> Int,
     recordStore: RecordEventStore?,
     localBanks: () -> List<QuizBank>,
-    applyRemoteBank: (groupName: String, name: String, questions: List<Question>) -> Unit,
+    applyRemoteBank: (groupName: String, name: String, questions: List<Question>) -> Boolean,
     renameLocalBank: (bankId: String, newName: String) -> Unit
 ): SyncEngine {
     // 数据安全闸门：未加载的库（声明题数>0 但题目体为空）绝不许进同步。

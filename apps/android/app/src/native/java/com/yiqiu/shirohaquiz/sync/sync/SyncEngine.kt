@@ -49,7 +49,7 @@ class SyncEngine(
     private val keys: SyncKeys,
     private val state: SyncStateStore,
     private val localBanks: () -> List<QuizBank>,
-    private val applyRemoteBank: (groupName: String, name: String, questions: List<Question>) -> Unit,
+    private val applyRemoteBank: (groupName: String, name: String, questions: List<Question>) -> Boolean,
     private val renameLocalBank: (bankId: String, newName: String) -> Unit,
     private val clockMillis: () -> Long = System::currentTimeMillis,
     private val localEvents: () -> List<StudyEvent> = { emptyList() },
@@ -127,6 +127,9 @@ class SyncEngine(
                 if (!applied) {
                     return@runLocked Report(
                         ok = false,
+                        uploaded = 0,
+                        downloaded = downloaded,
+                        conflicts = conflicts,
                         message = "题库「${decoded.name}」写入本地失败，已停止本轮同步（不会反复重下）。"
                     )
                 }
