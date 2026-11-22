@@ -247,8 +247,9 @@ fun WebDavBackupScreen(onBack: () -> Unit) {
                     TextButton(enabled = !busy, onClick = { run(manager::testConnection) }) { Text("测试连接") }
                     TextButton(enabled = !busy, onClick = { run(manager::createDirectoryByUserRequest) }) { Text("创建备份目录") }
                 }
-                if (!lastError.isNullOrBlank()) {
-                    Text("技术细节：${truncateForDisplay(lastError)}",
+                val techDetail = lastError
+                if (!techDetail.isNullOrBlank()) {
+                    Text("技术细节：${truncateForDisplay(techDetail)}",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
