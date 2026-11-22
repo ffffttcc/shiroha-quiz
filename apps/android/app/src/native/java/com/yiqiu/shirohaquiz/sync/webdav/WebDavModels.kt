@@ -23,6 +23,10 @@ data class WebDavSettings(
         val url = WebDavPaths.baseUrl(baseUrl)
         require(username.isNotBlank() && ':' !in username && username.none { it.isISOControl() }) {
             "WebDAV 用户名为空或格式无效。"
+        } {
+            "WebDAV 用户名为空或格式无效。"
+        } {
+            "WebDAV 用户名为空或格式无效。"
         }
         return copy(baseUrl = url.toString(), remoteDirectory = WebDavPaths.directory(remoteDirectory))
     }
@@ -35,8 +39,12 @@ data class WebDavSettings(
 /** Not a data class: credentials must never appear in generated toString/state/backup output. */
 class WebDavCredentials(val username: String, val password: String) {
     init {
-        require(username.isNotBlank() && ':' !in username && username.none { it.isISOControl() })
-        require(password.isNotEmpty() && password.none { it == '\r' || it == '\n' })
+        require(username.isNotBlank() && ':' !in username && username.none { it.isISOControl() }) {
+            "WebDAV 用户名为空或格式无效。"
+        }
+        require(password.isNotEmpty() && password.none { it == '\r' || it == '\n' }) {
+            "WebDAV 密码为空或包含换行。"
+        }
     }
 
     override fun toString(): String = "WebDavCredentials(redacted)"
@@ -223,7 +231,7 @@ internal object WebDavPaths {
         require(raw.startsWith('/') && raw.length <= 1024) { "远端目录必须以 / 开头，且长度不能超过限制。"
         }
         val parts = raw.trim('/').split('/').filter { it.isNotEmpty() }
-        require(parts.isNotEmpty() && parts.size <= 32)
+        require(parts.isNotEmpty() && parts.size <= 32) { "远端目录层级不合法（段数 ${parts.size}）：$raw" }
         parts.forEach { part ->
             require(part != "." && part != ".." && part.length <= 120 &&
                 part.none { it.isISOControl() || it in "\\%?#:" }) { "远端目录含不安全的字符或路径。"
@@ -256,7 +264,9 @@ internal object WebDavPaths {
     fun sameOrigin(a: HttpUrl, b: HttpUrl): Boolean = a.scheme == b.scheme && a.host == b.host && a.port == b.port
 
     fun requireSafeEncodedPath(path: String) {
-        require(!Regex("(?i)%2f|%5c|%25|%00").containsMatchIn(path) && '\\' !in path)
+        require(!Regex("(?i)%2f|%5c|%25|%00").containsMatchIn(path) && '\\' !in path) {
+            "远端路径含不安全的转义序列：$path"
+        }
         path.split('/').forEach { segment ->
             val dots = segment.replace(Regex("(?i)%2e"), ".")
             require(dots != "." && dots != "..") { "远端路径不安全，已拒绝访问。"
@@ -265,7 +275,7 @@ internal object WebDavPaths {
     }
 
     fun newBackupName(createdAt: Long, version: String, sha256: String, encrypted: Boolean = false): String {
-        require(isSha256(sha256))
+        require(isSha256(sha256)) { "SHA256 摘要格式无效：$sha256" }
         val stamp = formatter().format(Date(createdAt))
         val safeVersion = version.replace(Regex("[^A-Za-z0-9_-]"), "_").take(32).ifEmpty { "unknown" }
         val base = "shiroha-quiz-backup-$stamp-${UUID.randomUUID().toString().replace("-", "")}-android-v$safeVersion-sha256-${sha256.lowercase(Locale.ROOT)}.zip"

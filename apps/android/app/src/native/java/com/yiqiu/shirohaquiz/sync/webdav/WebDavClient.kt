@@ -174,9 +174,11 @@ class WebDavClient(
         cancellation: WebDavCancellation = WebDavCancellation(),
         onProgress: (Long, Long) -> Unit = { _, _ -> }
     ): WebDavTransferResult {
-        require(WebDavPaths.isBackup(entry.fileName))
+        require(WebDavPaths.isBackup(entry.fileName)) { "这不是备份文件名：${entry.fileName}" } { "这不是备份文件名：${entry.fileName}" } { "这不是备份文件名：${entry.fileName}" }
         if (!entry.integrityAvailable) throw WebDavIntegrityException("备份缺少 SHA256 摘要或完整大小信息，无法安全下载恢复。")
-        require(entry.sizeBytes <= maxBackupBytes && !destination.exists())
+        require(entry.sizeBytes <= maxBackupBytes && !destination.exists()) {
+            "下载目标不可用：大小 ${entry.sizeBytes} 超上限 $maxBackupBytes，或目标已存在（${destination.name}）。"
+        }
         val parent = destination.parentFile ?: throw WebDavException("缺少私有下载缓存目录。")
         check(parent.isDirectory || parent.mkdirs()) { "无法创建私有下载缓存目录。"
         }
@@ -285,7 +287,9 @@ class WebDavClient(
 
     /** Used only for bounded sidecar/index data, never for backup file bodies. */
     fun readMetadata(fileName: String, cancellation: WebDavCancellation = WebDavCancellation()): ByteArray? {
-        require(fileName == "manifest.json" || (fileName.startsWith("shiroha-quiz-backup-") && fileName.endsWith(".meta.json")))
+        require(fileName == "manifest.json" || (fileName.startsWith("shiroha-quiz-backup-") && fileName.endsWith(".meta.json"))) {
+            "只能读取备份元数据或清单：$fileName"
+        }
         return readSmall(fileUrl(fileName), cancellation)
     }
 
@@ -295,12 +299,12 @@ class WebDavClient(
 
     /** UI owns the second confirmation. This API accepts only owned files, never collections. */
     fun deleteBackup(entry: WebDavBackupEntry, cancellation: WebDavCancellation = WebDavCancellation()): Boolean {
-        require(WebDavPaths.isBackup(entry.fileName))
+        require(WebDavPaths.isBackup(entry.fileName)) { "这不是备份文件名：${entry.fileName}" }
         return deleteOwnedFile(entry.fileName, cancellation, entry.etag)
     }
 
     fun deleteMetadata(fileName: String, cancellation: WebDavCancellation = WebDavCancellation()): Boolean {
-        require(WebDavPaths.isBackup(fileName))
+        require(WebDavPaths.isBackup(fileName)) { "这不是备份文件名：$fileName" }
         return deleteOwnedFile("$fileName.meta.json", cancellation)
     }
 
@@ -330,7 +334,7 @@ class WebDavClient(
     }
 
     private fun propfind(url: HttpUrl, depth: Int, cancellation: WebDavCancellation): List<WebDavResource> {
-        require(depth in 0..1)
+        require(depth in 0..1) { "PROPFIND 深度只支持 0 或 1：$depth" }
         val query = request(url, "PROPFIND", PROPFIND_BODY.toRequestBody(XML)).newBuilder()
             .header("Depth", depth.toString()).build()
         return withResponse(query, cancellation) { response ->
@@ -633,7 +637,9 @@ class WebDavClient(
             cancellation: WebDavCancellation = WebDavCancellation(),
             maxBytes: Long = DEFAULT_MAX_BACKUP_BYTES
         ): WebDavTransferResult {
-            require(file.isFile && maxBytes > 0)
+            require(file.isFile && maxBytes > 0) {
+                "待计算哈希的文件无效：存在=${file.isFile}，上限=$maxBytes。"
+            }
             val digest = MessageDigest.getInstance("SHA-256")
             var total = 0L
             file.inputStream().use { input ->

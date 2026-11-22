@@ -661,36 +661,41 @@ class WebDavBackupManager private constructor(
         if (!keys.hasLegacy) return 0 to null
         val encrypted = client.list().filter { WebDavPaths.isEncryptedName(it.fileName) }
         if (encrypted.isEmpty()) return 0 to null
-        var migrated = 0
-        encrypted.forEachIndexed { index, resource ->
-            val shaHex = SHA256_IN_NAME.find(resource.fileName)?.groupValues?.get(1)
-                ?: return@forEachIndexed
-            val entry = WebDavPaths.fallbackEntry(resource)
-            val dest = newCacheFile("enc")
-            try {
-                client.download(entry, dest)
-                val raw = dest.readBytes()
-                val digest = WebDavPaths.hexToBytes(shaHex)
-                val opened = keys.openBackup(raw, digest)
-                if (opened.usedLegacy) {
-                    val reencrypted = keys.encryptBackup(opened.plaintext, digest)
+
+        // 先把密文下载齐（临时文件用 enc 扩展名：newCacheFile 现允许 zip/json/enc），
+        // 再交给纯逻辑 BackupMigration 做「旧码解 → 主钥匙重加密 → 调用方覆盖上传」。
+        val entries = mutableListOf<com.yiqiu.shirohaquiz.sync.sync.BackupMigration.Entry>()
+        val tempFiles = mutableListOf<File>()
+        try {
+            encrypted.forEach { resource ->
+                val shaHex = SHA256_IN_NAME.find(resource.fileName)?.groupValues?.get(1)
+                if (shaHex != null) {
+                    val dest = newCacheFile("enc")
+                    tempFiles += dest
+                    client.download(WebDavPaths.fallbackEntry(resource), dest)
+                    entries += com.yiqiu.shirohaquiz.sync.sync.BackupMigration.Entry(resource.fileName, dest.readBytes(), WebDavPaths.hexToBytes(shaHex))
+                }
+            }
+            val result = com.yiqiu.shirohaquiz.sync.sync.BackupMigration.migrate(
+                entries = entries,
+                keys = keys,
+                upload = { fileName, bytes ->
                     val out = newCacheFile("enc")
                     try {
-                        out.writeBytes(reencrypted)
-                        client.uploadAtomic(out, entry.fileName)
-                        migrated++
+                        out.writeBytes(bytes)
+                        client.uploadAtomic(out, fileName)
                     } finally {
                         out.delete()
                     }
-                }
-            } catch (error: Exception) {
-                return migrated to (error.message ?: "完整备份迁移失败：${resource.fileName}")
-            } finally {
-                dest.delete()
-                onProgress(index + 1, encrypted.size)
-            }
+                },
+                onProgress = onProgress
+            )
+            return result.migrated to result.failedObject?.let { result.message }
+        } catch (error: Exception) {
+            return 0 to (error.message ?: "完整备份迁移失败：${error::class.java.simpleName}")
+        } finally {
+            tempFiles.forEach { it.delete() }
         }
-        return migrated to null
     }
 
     private fun clientForSavedSettings(): WebDavClient =
@@ -703,7 +708,9 @@ class WebDavBackupManager private constructor(
     }
 
     private fun newCacheFile(extension: String): File {
-        require(extension == "zip" || extension == "json")
+        require(extension in setOf("zip", "json", "enc")) {
+            "缓存文件扩展名不受支持：$extension（允许 zip / json / enc）。"
+        }
         check(cacheDirectory.isDirectory || cacheDirectory.mkdirs()) { "无法创建不参与备份的 WebDAV 私有缓存。"
         }
         check(cacheDirectory.canonicalFile.parentFile == appContext.noBackupFilesDir.canonicalFile)
