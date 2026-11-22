@@ -74,6 +74,7 @@ fun WebDavBackupScreen(onBack: () -> Unit) {
     var confirmOverwrite by remember { mutableStateOf(false) }
     var saveFileName by remember { mutableStateOf("shiroha_cloud_backup.zip") }
     val syncStore = remember { SyncStateStore(context) }
+    val settingsStore = remember { WebDavSettingsStore(context) }
     var syncEnabled by remember { mutableStateOf(syncStore.isEnabled()) }
     var syncInterval by remember { mutableStateOf(syncStore.intervalMinutes()) }
     var syncWifiOnly by remember { mutableStateOf(syncStore.wifiOnly()) }
@@ -127,18 +128,58 @@ fun WebDavBackupScreen(onBack: () -> Unit) {
                     Text("加密保存应用密码到本机", style = MaterialTheme.typography.bodyMedium)
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    TextButton(enabled = !busy, onClick = { run {
-                        val saved = manager.saveSettings(WebDavSettings(endpoint, username, directory, rememberPassword), password.takeIf { it.isNotEmpty() })
-                        if (saved) {
+                    TextButton(enabled = !busy, onClick = {
+                        val enteredPassword = password.ifEmpty { settingsStore.loadPassword().orEmpty() }
+                        val previous = runCatching { settingsStore.credentials() }.getOrNull()
+                        val credentialsChanged = previous != null && enteredPassword.isNotEmpty() &&
+                            WebDavRotation.needed(previous.username, previous.password, username, enteredPassword)
+                        scope.launch {
+                            message = "正在保存配置…"
+                            val saved = manager.saveSettings(
+                                WebDavSettings(endpoint, username, directory, rememberPassword),
+                                password.takeIf { it.isNotEmpty() }
+                            )
+                            if (!saved) {
+                                message = "当前任务尚未结束，请稍后再试。"
+                                return@launch
+                            }
                             password = ""
                             if (!rememberPassword || !manager.hasPassword()) {
                                 val automatic = WebDavAutoBackup.load(context)
                                 if (automatic.intervalDays > 0) WebDavAutoBackup.save(context, automatic.copy(intervalDays = 0))
                             }
-                            message = "配置已保存。"
+                            if (!credentialsChanged) {
+                                message = "配置已保存。"
+                                return@launch
+                            }
+                            // 改密码=换钥匙：先加新口令 → 用新凭据把云端对象重加密 → 最后才摘旧口令。
+                            // 任何一步失败都不摘旧口令，用户不会被锁在外面。
+                            message = "配置已保存，正在同步新密码到服务器…"
+                            val admin = WebDavAdminClient(endpoint)
+                            val added = admin.rotate(
+                                WebDavRotation.MODE_ADD, username, previous!!.password, enteredPassword
+                            )
+                            if (!added.ok) {
+                                message = "配置已保存，但服务器没接受新密码：${added.detail}。旧密码仍然有效，请重试或手动处理。"
+                                return@launch
+                            }
+                            message = "新密码已加入服务器，正在重新加密云端数据…"
+                            val report = manager.syncNow()
+                            if (!WebDavRotation.canFinalize(added.ok, report.ok)) {
+                                message = "新密码已生效，但云端重加密没有完成：${report.message}。旧密码仍然有效，请重试。"
+                                return@launch
+                            }
+                            message = "重加密完成，正在完成切换…"
+                            val finalized = admin.rotate(
+                                WebDavRotation.MODE_FINALIZE, username, previous.password, enteredPassword
+                            )
+                            message = if (finalized.ok) {
+                                "密码已更新，云端数据已用新密钥重新加密。"
+                            } else {
+                                "重加密已完成，但旧密码没能摘除：${finalized.detail}。当前新旧密码都可用。"
+                            }
                         }
-                        saved
-                    } }) { Text("保存配置") }
+                    }) { Text("保存配置") }
                     TextButton(enabled = !busy, onClick = { run(manager::testConnection) }) { Text("测试连接") }
                     TextButton(enabled = !busy, onClick = { run(manager::createDirectoryByUserRequest) }) { Text("创建备份目录") }
                 }

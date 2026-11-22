@@ -74,6 +74,12 @@ class SyncStateStore(context: Context) {
         if (candidate > epoch()) preferences.edit().putLong(KEY_EPOCH, candidate).apply()
     }
 
+    /** 「所有云端对象是否已迁到凭据钥匙」的一次性标记（迁移成功才置位）。 */
+    fun keyMigrationDone(): Boolean = preferences.getBoolean(KEY_KEY_MIGRATION_DONE, false)
+
+    fun setKeyMigrationDone(done: Boolean) =
+        preferences.edit().putBoolean(KEY_KEY_MIGRATION_DONE, done).apply()
+
     /** 恢复备份后置位：下一轮把本地内容强制上传，绝不被远端覆盖。 */
     fun forceUploadLocal(): Boolean = preferences.getBoolean(KEY_FORCE_UPLOAD_LOCAL, false)
 
@@ -135,6 +141,7 @@ class SyncStateStore(context: Context) {
         const val KEY_LAST_ERROR = "last_error"
         const val KEY_LAST_ERROR_AT = "last_error_at"
         const val KEY_EPOCH = "sync_epoch"
+        const val KEY_KEY_MIGRATION_DONE = "key_migration_done"
         const val KEY_FORCE_UPLOAD_LOCAL = "force_upload_local"
         const val MAX_ERROR_LENGTH = 512
         const val KEY_BANK_META = "bank_meta_json"

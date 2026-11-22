@@ -119,6 +119,14 @@ object BackupEncryption {
         recoveryCode: String,
         plaintextSha256: ByteArray,
         random: SecureRandom = SecureRandom()
+    ): ByteArray = encryptWithKey(plaintext, deriveKey(recoveryCode), plaintextSha256, random)
+
+    /** 直接用钥匙字节加密（账号密码方案用；省掉每次重跑 21 万轮 KDF）。 */
+    fun encryptWithKey(
+        plaintext: ByteArray,
+        key: ByteArray,
+        plaintextSha256: ByteArray,
+        random: SecureRandom = SecureRandom()
     ): ByteArray {
         require(plaintextSha256.size == 32) { "明文摘要必须是 SHA256。" }
         val nonce = ByteArray(NONCE_LENGTH).also(random::nextBytes)
@@ -140,7 +148,11 @@ object BackupEncryption {
      * 用恢复码解出原始 ZIP 字节。任何结构/认证失败都抛 [BackupDecryptException]，
      * 不返回半成品，绝不静默降级。
      */
-    fun decrypt(payload: ByteArray, recoveryCode: String, plaintextSha256: ByteArray): ByteArray {
+    fun decrypt(payload: ByteArray, recoveryCode: String, plaintextSha256: ByteArray): ByteArray =
+        decryptWithKey(payload, deriveKey(recoveryCode), plaintextSha256)
+
+    /** 直接用钥匙字节解密；失败抛 BackupDecryptException。 */
+    fun decryptWithKey(payload: ByteArray, key: ByteArray, plaintextSha256: ByteArray): ByteArray {
         require(plaintextSha256.size == 32) { "明文摘要必须是 SHA256。" }
         if (!isEncrypted(payload)) throw BackupDecryptException("这不是加密备份文件。")
         if (payload.size < MIN_PAYLOAD_BYTES) throw BackupDecryptException("加密备份长度异常，文件可能被截断。")
@@ -156,7 +168,7 @@ object BackupEncryption {
         val nonce = payload.copyOfRange(HEADER_FIXED, HEADER_FIXED + nonceLength)
         val body = payload.copyOfRange(HEADER_FIXED + nonceLength, payload.size)
         val cipher = Cipher.getInstance("AES/GCM/NoPadding")
-        cipher.init(Cipher.DECRYPT_MODE, SecretKeySpec(deriveKey(recoveryCode), "AES"), GCMParameterSpec(TAG_BITS, nonce))
+        cipher.init(Cipher.DECRYPT_MODE, SecretKeySpec(key, "AES"), GCMParameterSpec(TAG_BITS, nonce))
         cipher.updateAAD(aad(plaintextSha256))
         val plaintext = try {
             cipher.doFinal(body)

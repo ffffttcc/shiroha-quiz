@@ -222,6 +222,66 @@ class SyncEngine(
     private fun message(uploaded: Int, downloaded: Int, conflicts: Int): String =
         if (uploaded + downloaded + conflicts == 0) "已是最新" else "上传 $uploaded / 下载 $downloaded / 冲突 $conflicts"
 
+    /** 全量重加密迁移的结果。 */
+    data class MigrationReport(
+        val total: Int,
+        val migrated: Int,
+        /** 失败对象名；非空表示迁移未完成、manifest 未重写。 */
+        val failedObject: String?,
+        val message: String
+    )
+
+    private data class MigrationTarget(val name: String, val aad: ByteArray)
+
+    /**
+     * **全量**把云端对象迁到凭据钥匙：遍历 manifest 引用的所有 bank / record 对象，
+     * 逐个「下载 → 旧码解 → 主钥匙重加密 → 覆盖上传」，最后重写 manifest。
+     *
+     * 幂等：已能用主钥匙解开的对象直接跳过（[SyncKeys.Opened.usedLegacy] == false）。
+     * 可中断：每个对象独立完成；中途失败时**不删旧对象、不重写 manifest**，下次从断点继续。
+     */
+    fun migrateAllToPrimaryKey(onProgress: ((done: Int, total: Int) -> Unit)? = null): MigrationReport {
+        val manifestRaw = client.getSyncObject(SyncObjects.MANIFEST)
+            ?: return MigrationReport(0, 0, null, "云端没有清单，无需迁移。")
+        val manifest = keys.openManifest(manifestRaw).manifest
+
+        val targets = buildList {
+            manifest.banks.values.sortedBy { it.contentHash }.forEach { record ->
+                add(MigrationTarget(SyncObjects.bankName(record.contentHash), SyncPayloadCipher.aadForContent(record.contentHash)))
+            }
+            manifest.recordShards.sorted().forEach { shard ->
+                add(MigrationTarget(SyncObjects.recordName(shard), SyncPayloadCipher.aadForContent(shard)))
+            }
+        }
+
+        var migrated = 0
+        targets.forEachIndexed { index, target ->
+            try {
+                val raw = client.getSyncObject(target.name)
+                if (raw != null) {
+                    val opened = keys.open(raw, target.aad)
+                    if (opened.usedLegacy) {
+                        client.putSyncObject(target.name, keys.encrypt(opened.plaintext, target.aad))
+                        migrated++
+                    }
+                }
+            } catch (error: Exception) {
+                // 不删旧对象、不写 manifest；把对象名与原文带回去。
+                return MigrationReport(
+                    total = targets.size,
+                    migrated = migrated,
+                    failedObject = target.name,
+                    message = "全量重加密中断于 ${target.name}：${error::class.java.simpleName}: ${error.message}"
+                )
+            }
+            onProgress?.invoke(index + 1, targets.size)
+        }
+
+        // manifest 最后写，且总是用主钥匙（它自己也可能还是旧码）。
+        client.putSyncObject(SyncObjects.MANIFEST, keys.encryptManifest(manifest))
+        return MigrationReport(targets.size, migrated, null, "迁移完成 $migrated 个（共 ${targets.size} 个对象）")
+    }
+
     private fun fetchManifest(): SyncManifest? {
         val raw = client.getSyncObject(SyncObjects.MANIFEST) ?: return null
         val opened = keys.openManifest(raw)

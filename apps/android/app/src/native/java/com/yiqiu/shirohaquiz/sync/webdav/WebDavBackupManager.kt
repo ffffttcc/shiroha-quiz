@@ -109,15 +109,31 @@ class WebDavBackupManager private constructor(
             renameLocalBank = { bankId, newName -> QuizRepository.renameBank(appContext, bankId, newName) }
         )
         try {
+            // 一次性全量迁移：把仍是旧恢复码加密的云端对象换成凭据钥匙，
+            // 否则没有旧码的新设备永远解不开。成功才置标记，失败下一轮重试。
+            var migrationNote = ""
+            if (keys.hasLegacy && !store.keyMigrationDone()) {
+                val migration = engine.migrateAllToPrimaryKey()
+                if (migration.failedObject != null) {
+                    store.recordFailure(migration.message)
+                    return@withContext com.yiqiu.shirohaquiz.sync.sync.SyncEngine.Report(
+                        ok = false, uploaded = 0, downloaded = 0, conflicts = 0,
+                        message = migration.message
+                    )
+                }
+                store.setKeyMigrationDone(true)
+                migrationNote = "（${migration.message}）"
+            }
             engine.run().let { report ->
                 recordSyncFailure(store, report)
                 val base = if (loadFailures.isEmpty()) report else report.copy(
                     message = report.message + "（跳过 ${loadFailures.size} 个加载失败的库）"
                 )
-                if (base.migrated > 0) {
-                    base.copy(message = base.message + "（已迁移 ${base.migrated} 个旧版加密对象）")
+                val withMigration = if (migrationNote.isEmpty()) base else base.copy(message = base.message + migrationNote)
+                if (withMigration.migrated > 0) {
+                    withMigration.copy(message = withMigration.message + "（已迁移 ${withMigration.migrated} 个旧版加密对象）")
                 } else {
-                    base
+                    withMigration
                 }
             }
         } catch (error: Exception) {
@@ -244,7 +260,8 @@ class WebDavBackupManager private constructor(
             val plaintextSha256 = WebDavPaths.digestHex(plaintextDigest)
             val payloadBytes = if (encrypt) withContext(Dispatchers.IO) {
                 work.cancellation.throwIfCancelled()
-                BackupEncryption.encrypt(bytes, recoveryCodes.ensure(), plaintextDigest)
+                // 完整备份也用凭据钥匙（有密码时），让新设备能直接解开新备份。
+                BackupEncryption.encryptWithKey(bytes, backupPrimaryKey(), plaintextDigest)
             } else bytes
             val digest = withContext(Dispatchers.IO) {
                 writePrivateFile(file, payloadBytes, work.cancellation)
@@ -597,6 +614,18 @@ class WebDavBackupManager private constructor(
         }
     }
 
+    /** 完整备份的主钥匙：有已存密码用凭据派生，否则退回旧恢复码。 */
+    private fun backupPrimaryKey(): ByteArray {
+        val settings = settingsStore.load()
+        val password = settingsStore.loadPassword()
+        if (!password.isNullOrEmpty()) {
+            return com.yiqiu.shirohaquiz.security.BackupEncryption.deriveKeyFromMaterial(
+                com.yiqiu.shirohaquiz.security.BackupEncryption.credentialMaterial(settings.username, password)
+            )
+        }
+        return com.yiqiu.shirohaquiz.security.BackupEncryption.deriveKey(recoveryCodes.ensure())
+    }
+
     private fun clientForSavedSettings(): WebDavClient =
         clientFactory(settingsStore.load().validated(), settingsStore.credentials())
 
@@ -653,13 +682,20 @@ class WebDavBackupManager private constructor(
         val encrypted = WebDavPaths.isEncryptedName(entry.fileName)
         val raw = readVerifiedBytes(file, entry, cancellation, verifyContentHash = !encrypted)
         if (!encrypted) return raw
-        val code = recoveryCodes.existing()
-            ?: throw WebDavException("本机没有备份恢复码，无法解密这份云端备份。")
         val sha = entry.sha256 ?: throw WebDavException("备份缺少校验值，无法解密。")
+        val digest = WebDavPaths.hexToBytes(sha)
+        // 先凭据钥匙（新备份），失败再用旧恢复码（旧备份）——旧码只为兼容存在。
+        val primary = runCatching { backupPrimaryKey() }.getOrNull()
+        if (primary != null) {
+            runCatching { BackupEncryption.decryptWithKey(raw, primary, digest) }
+                .onSuccess { return it }
+        }
+        val code = recoveryCodes.existing()
+            ?: throw WebDavException("账号或密码与云端备份不匹配，且本机没有旧版恢复码可兜底。")
         return try {
-            BackupEncryption.decrypt(raw, code, WebDavPaths.hexToBytes(sha))
+            BackupEncryption.decryptWithKey(raw, BackupEncryption.deriveKey(code), digest)
         } catch (error: BackupDecryptException) {
-            throw WebDavException(error.message ?: "解密失败，已放弃恢复。")
+            throw WebDavException("账号或密码与云端备份不匹配（这份备份可能是旧版恢复码加密的）。")
         }
     }
 
