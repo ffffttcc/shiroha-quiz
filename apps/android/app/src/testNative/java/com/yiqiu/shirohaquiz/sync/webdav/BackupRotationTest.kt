@@ -38,9 +38,14 @@ class BackupRotationTest {
         assertEquals(listOf("d.enc", "e.enc"), plan.map { it.fileName })
     }
 
-    @Test fun newestIsNeverPlannedEvenWhenKeepIsZero() {
+    @Test fun newestIsAlwaysKeptEvenWhenBelowKeepCount() {
+        // 只留 3 份时，两份都留下；最新一份永远不在删除候选里。
         val entries = listOf(backup("new.enc", 0), backup("old.enc", 5))
-        assertEquals(listOf("old.enc"), BackupRotation.planCleanup(entries, 0).map { it.fileName })
+        assertTrue(BackupRotation.planCleanup(entries, 3).isEmpty())
+        val many = (0 until 5).map { backup("b$it.enc", it.toLong()) }
+        val plan = BackupRotation.planCleanup(many, 3).map { it.fileName }
+        assertFalse("最新一份绝不能进候选", plan.contains("b0.enc"))
+        assertEquals(listOf("b3.enc", "b4.enc"), plan)
     }
 
     @Test fun syncObjectsAreNeverPlanned() {
@@ -63,10 +68,13 @@ class BackupRotationTest {
         assertTrue(BackupRotation.planCleanup(entries, 1).isEmpty())
     }
 
-    @Test fun protectedEntrySurvivesEvenIfOldest() {
-        val entries = listOf(backup("new.enc", 0), backup("just-uploaded.enc", 9), backup("old2.enc", 3))
-        val plan = BackupRotation.planCleanup(entries, 1, protectedFileNames = setOf("just-uploaded.enc"))
-        assertEquals(listOf("old2.enc"), plan.map { it.fileName })
+    @Test fun protectedEntrySurvivesEvenIfItFallsOutsideKeepCount() {
+        // 4 份、保留 3 份：第 4 旧的那份本来会被删；把它标成受保护后必须留下。
+        val entries = listOf(
+            backup("new.enc", 0), backup("b1.enc", 1), backup("b2.enc", 2), backup("just-uploaded.enc", 9)
+        )
+        assertEquals(listOf("just-uploaded.enc"), BackupRotation.planCleanup(entries, 3).map { it.fileName })
+        assertTrue(BackupRotation.planCleanup(entries, 3, protectedFileNames = setOf("just-uploaded.enc")).isEmpty())
     }
 
     @Test fun singleFailureDoesNotStopTheOthers() {

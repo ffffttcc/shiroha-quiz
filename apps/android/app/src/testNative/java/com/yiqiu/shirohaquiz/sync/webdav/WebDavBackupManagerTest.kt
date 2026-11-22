@@ -57,11 +57,13 @@ class WebDavBackupManagerTest {
         }
     }
 
-    @Test fun automaticBackupDefaultsRemainOff() {
+    @Test fun automaticBackupIntervalDefaultsOffButRotationDefaultsOn() {
+        // 2026-11-22 需求变更：定时备份仍默认关，但「超出保留份数的旧备份自动删除」默认开。
         val context = RuntimeEnvironment.getApplication()
         val defaults = WebDavAutoBackup.load(context)
         assertEquals(0, defaults.intervalDays)
-        assertFalse(defaults.deleteOldBackups)
+        assertTrue(defaults.deleteOldBackups)
+        assertEquals(5, defaults.keepCount)
         assertThrows(IllegalArgumentException::class.java) {
             WebDavAutoBackup.save(context, defaults.copy(intervalDays = 1))
         }
