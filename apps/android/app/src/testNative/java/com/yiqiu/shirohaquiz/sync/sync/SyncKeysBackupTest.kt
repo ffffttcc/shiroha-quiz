@@ -63,15 +63,23 @@ class SyncKeysBackupTest {
         assertFalse("不许出现恢复码不匹配", message.contains("恢复码不匹配"))
     }
 
-    /** AAD 规则未被改动：本项目用 BackupEncryption 自身的 key 重载能互解（同一 AAD 口径）。 */
+    /**
+     * AAD 规则未变：用 BackupEncryption 旧 API（旧码派生的 key）加密的包，
+     * 必须能被 SyncKeys 的**旧码回退**解开——两边 AAD 口径一致（ver + 明文 sha256 前 8 字节）。
+     * 反向不成立是正常的：主钥匙密文用旧码 key 解必然失败，这正是「两把钥匙不同」的证明。
+     */
     @Test
     fun aadRuleUnchangedAcrossSyncKeysAndBackupEncryption() {
-        val key = BackupEncryption.deriveKey(legacyCode)
-        val sealedByLegacyApi = BackupEncryption.encryptWithKey(plaintext, key, digest)
+        val legacyKey = BackupEncryption.deriveKey(legacyCode)
+        val sealedByLegacyApi = BackupEncryption.encryptWithKey(plaintext, legacyKey, digest)
         val opened = keysWithLegacy().openBackup(sealedByLegacyApi, digest)
         assertArrayEquals(plaintext, opened.plaintext)
+        assertTrue("旧 API 的密文应走旧码回退", opened.usedLegacy)
 
-        val sealedBySyncKeys = keysWithLegacy().encryptBackup(plaintext, digest)
-        assertArrayEquals(plaintext, BackupEncryption.decryptWithKey(sealedBySyncKeys, key, digest))
+        // 同一份密文换个错误 AAD（摘要不同）必须打不开，证明 AAD 真的参与校验
+        val wrongDigest = java.security.MessageDigest.getInstance("SHA-256").digest(byteArrayOf(1, 2, 3))
+        assertThrows(BackupDecryptException::class.java) {
+            keysWithLegacy().openBackup(sealedByLegacyApi, wrongDigest)
+        }
     }
 }
