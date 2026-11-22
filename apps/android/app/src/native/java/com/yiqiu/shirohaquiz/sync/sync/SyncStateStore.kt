@@ -74,6 +74,12 @@ class SyncStateStore(context: Context) {
         if (candidate > epoch()) preferences.edit().putLong(KEY_EPOCH, candidate).apply()
     }
 
+    /** 「完整备份包是否已迁到凭据钥匙」的一次性标记（与同步对象迁移分开，互不阻塞）。 */
+    fun backupKeyMigrationDone(): Boolean = preferences.getBoolean(KEY_BACKUP_MIGRATION_DONE, false)
+
+    fun setBackupKeyMigrationDone(done: Boolean) =
+        preferences.edit().putBoolean(KEY_BACKUP_MIGRATION_DONE, done).apply()
+
     /** 迁移中间态进度：只更新展示文案，不动 last_sync_at 与基线（迁移还没完成）。 */
     fun setSyncProgress(text: String) =
         preferences.edit().putString(KEY_LAST_SYNC_RESULT, text).apply()
@@ -146,6 +152,7 @@ class SyncStateStore(context: Context) {
         const val KEY_LAST_ERROR_AT = "last_error_at"
         const val KEY_EPOCH = "sync_epoch"
         const val KEY_KEY_MIGRATION_DONE = "key_migration_done"
+        const val KEY_BACKUP_MIGRATION_DONE = "backup_key_migration_done"
         const val KEY_FORCE_UPLOAD_LOCAL = "force_upload_local"
         const val MAX_ERROR_LENGTH = 512
         const val KEY_BANK_META = "bank_meta_json"

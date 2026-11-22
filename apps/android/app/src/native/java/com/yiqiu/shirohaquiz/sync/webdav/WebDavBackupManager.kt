@@ -121,18 +121,9 @@ class WebDavBackupManager private constructor(
                 // 迁移必须与 engine.run() 一样受单写者闸门保护：手点 + 定时任务同时触发时，
                 // 两轮迁移会并发写同一批对象，rclone 直接回 423「资源已被锁定」。
                 val migration = com.yiqiu.shirohaquiz.sync.sync.SyncWriteGate.withLock {
-                    val objects = engine.migrateAllToPrimaryKey { done, total ->
+                    engine.migrateAllToPrimaryKey { done, total ->
                         store.setSyncProgress("正在迁移旧版加密对象：已迁移 $done/$total")
-                    }
-                    if (objects.failedObject != null) {
-                        objects to (0 to null as String?)
-                    } else {
-                        // 同步对象迁完之后，再迁完整备份包（同一把闸门内，串行执行不嵌套）。
-                        val (backupMigrated, backupFailure) = migrateBackupPackages(client) { done, total ->
-                            store.setSyncProgress("正在迁移旧版完整备份：已迁移 $done/$total")
-                        }
-                        objects to (backupMigrated to backupFailure)
-                    }
+                    } to (0 to null as String?)
                 }
                 val objects = migration.first
                 val (backupMigrated, backupFailure) = migration.second
@@ -152,8 +143,26 @@ class WebDavBackupManager private constructor(
                     )
                 }
                 store.setKeyMigrationDone(true)
-                migrationNote = "（${objects.message}" +
-                    (if (backupMigrated > 0) "；完整备份迁移 $backupMigrated 份" else "") + "）"
+                migrationNote = "（${objects.message}）"
+
+                // 完整备份包用**独立标记**：它的迁移不能被「同步对象已迁完」挡住。
+                if (keys.hasLegacy && !store.backupKeyMigrationDone()) {
+                    val (backupMigrated, backupFailure) = com.yiqiu.shirohaquiz.sync.sync.SyncWriteGate.withLock {
+                        migrateBackupPackages(client) { done, total ->
+                            store.setSyncProgress("正在迁移旧版完整备份：已迁移 $done/$total")
+                        }
+                    }
+                    if (backupFailure != null) {
+                        val text = "完整备份迁移中断：$backupFailure"
+                        store.recordFailure(text)
+                        return@withContext com.yiqiu.shirohaquiz.sync.sync.SyncEngine.Report(
+                            ok = false, uploaded = 0, downloaded = 0, conflicts = 0,
+                            message = text
+                        )
+                    }
+                    store.setBackupKeyMigrationDone(true)
+                    if (backupMigrated > 0) migrationNote += "（完整备份迁移 $backupMigrated 份）"
+                }
             }
             engine.run().let { report ->
                 recordSyncFailure(store, report)
