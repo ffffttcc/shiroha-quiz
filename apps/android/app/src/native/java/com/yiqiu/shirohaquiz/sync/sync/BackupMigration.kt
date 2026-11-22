@@ -25,6 +25,16 @@ object BackupMigration {
     )
 
     /**
+     * 折算「可用的期望大小」，**绝不让哨兵值参与完整性比较**。
+     *
+     * 真机事故：`fallbackEntry` 在列表没带 getcontentlength 时给 `sizeBytes = -1`，
+     * 直接拿去下载 → `total != expectedSize` 必然成立 → 报「SHA256 摘要或大小校验失败」。
+     * 规则：只有 > 0 的值才算数；列表值优先，其次 stat 值；都没有返回 null（调用方应跳过）。
+     */
+    fun effectiveSize(listedBytes: Long?, statBytes: Long?): Long? =
+        listOfNotNull(listedBytes, statBytes).firstOrNull { it > 0L }
+
+    /**
      * @param upload 由调用方实现（覆盖写同名对象）
      */
     fun migrate(

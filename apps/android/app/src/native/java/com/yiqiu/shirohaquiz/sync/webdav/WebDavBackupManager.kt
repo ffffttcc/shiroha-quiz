@@ -666,13 +666,26 @@ class WebDavBackupManager private constructor(
         // 再交给纯逻辑 BackupMigration 做「旧码解 → 主钥匙重加密 → 调用方覆盖上传」。
         val entries = mutableListOf<com.yiqiu.shirohaquiz.sync.sync.BackupMigration.Entry>()
         val tempFiles = mutableListOf<File>()
+        val skipped = mutableListOf<String>()
         try {
             encrypted.forEach { resource ->
                 val shaHex = SHA256_IN_NAME.find(resource.fileName)?.groupValues?.get(1)
                 if (shaHex != null) {
+                    // 列表接口常常不给 getcontentlength（sizeBytes=null → fallbackEntry 填 -1）。
+                    // 拿 -1 去下载必然过不了大小校验，所以这里**先 stat 取真实大小**；
+                    // 取不到就跳过该对象并在 Report 点名，绝不用哨兵值参与比较。
+                    val stat = runCatching { client.statFile(resource.fileName) }.getOrNull()
+                    val size = com.yiqiu.shirohaquiz.sync.sync.BackupMigration.effectiveSize(
+                        resource.sizeBytes, stat?.sizeBytes
+                    )
+                    if (size == null) {
+                        skipped += resource.fileName
+                        return@forEach
+                    }
                     val dest = newCacheFile("enc")
                     tempFiles += dest
-                    client.download(WebDavPaths.fallbackEntry(resource), dest)
+                    val entry = WebDavPaths.fallbackEntry(resource).copy(sizeBytes = size, sha256 = shaHex)
+                    client.download(entry, dest)
                     entries += com.yiqiu.shirohaquiz.sync.sync.BackupMigration.Entry(resource.fileName, dest.readBytes(), WebDavPaths.hexToBytes(shaHex))
                 }
             }
@@ -690,7 +703,8 @@ class WebDavBackupManager private constructor(
                 },
                 onProgress = onProgress
             )
-            return result.migrated to result.failedObject?.let { result.message }
+            val note = if (skipped.isEmpty()) null else "跳过 ${skipped.size} 份（取不到大小）：${skipped.joinToString("、")}"
+            return result.migrated to (result.failedObject?.let { result.message } ?: note)
         } catch (error: Exception) {
             return 0 to (error.message ?: "完整备份迁移失败：${error::class.java.simpleName}")
         } finally {

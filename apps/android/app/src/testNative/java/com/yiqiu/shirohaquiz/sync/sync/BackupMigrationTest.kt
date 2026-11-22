@@ -75,6 +75,29 @@ class BackupMigrationTest {
         assertEquals(0, result.migrated)
     }
 
+    // ---- 哨兵值（sizeBytes = -1）绝不许参与完整性比较 ----
+
+    /** 列表没给大小（-1）时用 stat 的真实值——这正是真机报「大小校验失败」的那条。 */
+    @Test
+    fun sentinelSizeFallsBackToStatSize() {
+        assertEquals(2048L, BackupMigration.effectiveSize(listedBytes = -1L, statBytes = 2048L))
+        assertEquals(2048L, BackupMigration.effectiveSize(listedBytes = null, statBytes = 2048L))
+    }
+
+    /** 两处都取不到有效大小 → 返回 null（调用方必须跳过，而不是拿 -1 去比）。 */
+    @Test
+    fun sentinelSizeWithoutStatIsNullSoCallerSkips() {
+        assertNull(BackupMigration.effectiveSize(listedBytes = -1L, statBytes = null))
+        assertNull(BackupMigration.effectiveSize(listedBytes = null, statBytes = null))
+        assertNull("0 字节不是合法备份大小", BackupMigration.effectiveSize(listedBytes = 0L, statBytes = -1L))
+    }
+
+    /** 列表值有效时优先用它（与 stat 不一致也不该用小的那个去截断下载）。 */
+    @Test
+    fun listedSizeWinsWhenBothValid() {
+        assertEquals(1500L, BackupMigration.effectiveSize(listedBytes = 1500L, statBytes = 1600L))
+    }
+
     /** 进度回调按份推进到最后一份。 */
     @Test
     fun progressReportsEachEntry() {
