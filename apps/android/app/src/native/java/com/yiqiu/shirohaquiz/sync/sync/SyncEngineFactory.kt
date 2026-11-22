@@ -23,11 +23,16 @@ internal fun buildSyncEngine(
     client: WebDavClient,
     recoveryCode: String,
     state: SyncStateStore,
+    /** 索引声明的题数提供者（空库护栏用）。**故意不给默认值**：逼调用方显式交出来。 */
+    declaredQuestionCount: (bankId: String) -> Int,
     recordStore: RecordEventStore?,
     localBanks: () -> List<QuizBank>,
     applyRemoteBank: (groupName: String, name: String, questions: List<Question>) -> Unit,
     renameLocalBank: (bankId: String, newName: String) -> Unit
 ): SyncEngine {
+    // 数据安全闸门：未加载的库（声明题数>0 但题目体为空）绝不许进同步。
+    // 放在工厂里而不是调用方，是为了让「忘接线」直接编译不过/立刻抛错。
+    SyncBankGuard.requireLoaded(localBanks(), declaredQuestionCount)
     if (recordStore == null) {
         return SyncEngine(
             client = client,

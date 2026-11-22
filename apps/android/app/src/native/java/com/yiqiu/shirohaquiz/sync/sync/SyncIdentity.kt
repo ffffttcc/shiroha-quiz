@@ -29,6 +29,18 @@ object SyncIdentity {
 
     fun contentHash(bank: QuizBank): String = sha256Hex(canonicalJson(bank.questions))
 
+    /**
+     * 带**空库护栏**的 contentHash：索引声明题数 > 0 却拿不到题目体时直接抛，
+     * 绝不算出一个「看起来合法」的空库哈希（那会让空内容参与同步）。
+     * 合法空库（声明题数 == 0）照常通过。
+     */
+    fun contentHashChecked(bank: QuizBank, declaredQuestionCount: Int): String {
+        require(!(bank.questions.isEmpty() && declaredQuestionCount > 0)) {
+            "题库「${bank.name}」索引声明 $declaredQuestionCount 题，但题目体为空（未加载），拒绝计算空库哈希。"
+        }
+        return contentHash(bank)
+    }
+
     /** 冲突副本命名：改名后身份键变化，会作为新库参与后续同步——这是期望行为（两个版本都保住）。 */
     fun conflictCopyName(originalName: String, timestampMillis: Long): String {
         val stamp = java.text.SimpleDateFormat("MM-dd HH:mm", java.util.Locale.CHINA)

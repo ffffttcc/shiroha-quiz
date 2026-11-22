@@ -87,21 +87,34 @@ class WebDavBackupManager private constructor(
     suspend fun syncNow(): com.yiqiu.shirohaquiz.sync.sync.SyncEngine.Report = withContext(Dispatchers.IO) {
         val client = clientForSavedSettings()
         val store = com.yiqiu.shirohaquiz.sync.sync.SyncStateStore(appContext)
+        // 数据安全：必须先把所有库的题目体加载进来，否则「未加载的库」会被算成空库哈希并上传。
+        val loadFailures = QuizRepository.ensureAllBanksLoaded()
+        val syncableBanks = QuizRepository.banks.filterNot { bank -> bank.id in loadFailures }
+        com.yiqiu.shirohaquiz.sync.sync.SyncBankGuard.requireLoaded(syncableBanks) { bankId ->
+            QuizRepository.indexedQuestionCount(bankId)
+        }
         // 记录事件必须注入：漏了就会「同步成功但记录片 +0」（本工程第三次同类事故）。
         val recordStore = com.yiqiu.shirohaquiz.sync.records.RecordEventStore.forContext(appContext)
         val engine = com.yiqiu.shirohaquiz.sync.sync.buildSyncEngine(
             client = client,
             recoveryCode = recoveryCodes.ensure(),
             state = store,
+            declaredQuestionCount = { bankId -> QuizRepository.indexedQuestionCount(bankId) },
             recordStore = recordStore,
-            localBanks = { QuizRepository.banks.toList() },
+            // 用过滤后的快照：加载失败的库本轮不上传（下面会在 Report 里点名）
+            localBanks = { QuizRepository.banks.filterNot { bank -> bank.id in loadFailures } },
             applyRemoteBank = { groupName, name, questions ->
                 QuizRepository.applySyncedBank(appContext, groupName, name, questions)
             },
             renameLocalBank = { bankId, newName -> QuizRepository.renameBank(appContext, bankId, newName) }
         )
         try {
-            engine.run().also { report -> recordSyncFailure(store, report) }
+            engine.run().let { report ->
+                recordSyncFailure(store, report)
+                if (loadFailures.isEmpty()) report else report.copy(
+                    message = report.message + "（跳过 ${loadFailures.size} 个加载失败的库）"
+                )
+            }
         } catch (error: Exception) {
             // 异常同样不吞：原文落盘，并把原文作为本轮结果返回，UI 照原句显示。
             val detail = "${error::class.java.simpleName}: ${error.message}"

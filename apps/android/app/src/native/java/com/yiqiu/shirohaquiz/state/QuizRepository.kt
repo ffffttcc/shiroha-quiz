@@ -6425,6 +6425,28 @@ object QuizRepository {
     }
 
     /** 同步补全单个库（改名/改题等单库入口；调用前该库通常已由 preloadBankContent 载入）。 */
+    /**
+     * 同步前**强制加载全部题库**（数据安全级）。
+     *
+     * 背景：`readStoredBankIndex()` 建的是轻量索引（`questions = emptyList()`），题目靠
+     * `ensureBankLoaded()` 惰性加载。同步如果直接读这份索引，未加载的库会被算成「空库哈希」，
+     * 于是把 43 个库都当成同一份空内容往外传——另一台设备照这个 manifest 同步就会把题库清空。
+     *
+     * @return 加载**失败**的 bankId 集合（调用方须跳过这些库，绝不能上传）
+     */
+    fun ensureAllBanksLoaded(): Set<String> {
+        val pending = unloadedBankIds.toList()
+        if (pending.isEmpty()) return emptySet()
+        pending.forEach { id -> ensureBankLoaded(id) }
+        return pending.filter { id -> unloadedBankIds.contains(id) }.toSet()
+    }
+
+    /** 索引记录里声明的题数（轻量索引自带；未收录返回 0）。 */
+    fun indexedQuestionCount(bankId: String): Int = indexedBankQuestionCounts[bankId] ?: 0
+
+    /** 该库当前是否仍是「只有索引、题目未加载」状态。 */
+    fun isBankPendingLoad(bankId: String): Boolean = unloadedBankIds.contains(bankId)
+
     private fun ensureBankLoaded(bankId: String) {
         if (bankId.isBlank() || !unloadedBankIds.contains(bankId)) return
         val context = appContext ?: return
