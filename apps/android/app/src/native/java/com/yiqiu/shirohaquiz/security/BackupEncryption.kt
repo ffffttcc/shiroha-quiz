@@ -131,7 +131,7 @@ object BackupEncryption {
         require(plaintextSha256.size == 32) { "明文摘要必须是 SHA256。" }
         val nonce = ByteArray(NONCE_LENGTH).also(random::nextBytes)
         val cipher = Cipher.getInstance("AES/GCM/NoPadding")
-        cipher.init(Cipher.ENCRYPT_MODE, SecretKeySpec(deriveKey(recoveryCode), "AES"), GCMParameterSpec(TAG_BITS, nonce))
+        cipher.init(Cipher.ENCRYPT_MODE, SecretKeySpec(key, "AES"), GCMParameterSpec(TAG_BITS, nonce))
         cipher.updateAAD(aad(plaintextSha256))
         val body = cipher.doFinal(plaintext)
         return ByteArrayOutputStream(MIN_PAYLOAD_BYTES + body.size).apply {

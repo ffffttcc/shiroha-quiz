@@ -87,6 +87,8 @@ class WebDavBackupManager private constructor(
     suspend fun syncNow(): com.yiqiu.shirohaquiz.sync.sync.SyncEngine.Report = withContext(Dispatchers.IO) {
         val client = clientForSavedSettings()
         val store = com.yiqiu.shirohaquiz.sync.sync.SyncStateStore(appContext)
+        // 钥匙只派生一次（PBKDF2 21 万轮），迁移判断与引擎共用同一份。
+        val keys = syncKeys()
         // 数据安全：必须先把所有库的题目体加载进来，否则「未加载的库」会被算成空库哈希并上传。
         val loadFailures = QuizRepository.ensureAllBanksLoaded()
         val syncableBanks = QuizRepository.banks.filterNot { bank -> bank.id in loadFailures }
@@ -97,7 +99,7 @@ class WebDavBackupManager private constructor(
         val recordStore = com.yiqiu.shirohaquiz.sync.records.RecordEventStore.forContext(appContext)
         val engine = com.yiqiu.shirohaquiz.sync.sync.buildSyncEngine(
             client = client,
-            keys = syncKeys(),
+            keys = keys,
             state = store,
             declaredQuestionCount = { bankId -> QuizRepository.indexedQuestionCount(bankId) },
             recordStore = recordStore,
