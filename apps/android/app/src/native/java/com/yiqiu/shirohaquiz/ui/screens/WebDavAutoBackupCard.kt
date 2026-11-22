@@ -6,6 +6,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.platform.LocalContext
+import com.yiqiu.shirohaquiz.sync.webdav.BackupRotation
 import com.yiqiu.shirohaquiz.sync.webdav.WebDavAutoBackup
 import com.yiqiu.shirohaquiz.ui.components.GlassCard
 import com.yiqiu.shirohaquiz.ui.components.NoticeCard
@@ -19,7 +20,7 @@ internal fun WebDavAutoBackupCard(enabled: Boolean) {
     var message by remember { mutableStateOf<String?>(null) }
     GlassCard {
         Text("自动备份", style = MaterialTheme.typography.titleLarge)
-        Text(if (settings.intervalDays == 0) "默认关闭。开启后按条件在后台上传完整备份。" else "已设置自动备份，实际执行时间由 Android 调度。",
+        Text(if (settings.intervalDays == 0) "自动备份本身默认关闭；开启后按条件在后台备份，并把超出的最旧备份删掉。" else "已设置自动备份，实际执行时间由 Android 调度。",
             style = MaterialTheme.typography.bodyMedium)
         TextButton(onClick = { expanded = !expanded }) { Text(if (expanded) "收起设置" else "配置自动备份") }
         if (expanded) {
@@ -40,10 +41,10 @@ internal fun WebDavAutoBackupCard(enabled: Boolean) {
                 Checkbox(settings.deleteOldBackups, { checked ->
                     if (checked) confirmDeletion = true else settings = settings.copy(deleteOldBackups = false)
                 }, enabled = enabled)
-                Text("上传成功后清理旧的 Android 备份")
+                Text("上传成功后自动删除超出的最旧备份")
             }
             if (settings.deleteOldBackups) Row {
-                listOf(5, 10, 20).forEach { count -> FilterChip(settings.keepCount == count,
+                BackupRotation.KEEP_OPTIONS.forEach { count -> FilterChip(settings.keepCount == count,
                     onClick = { settings = settings.copy(keepCount = count) }, label = { Text("保留 $count 份") }, enabled = enabled) }
             }
             Text("建议先验证手动上传与恢复，再开启自动清理。需要加密保存应用密码；自动备份不会覆盖本地内容。",
@@ -56,7 +57,7 @@ internal fun WebDavAutoBackupCard(enabled: Boolean) {
         message?.let { NoticeCard(it, warning = it.contains("失败")) }
     }
     if (confirmDeletion) AlertDialog(onDismissRequest = { confirmDeletion = false }, title = { Text("开启旧备份清理？") },
-        text = { Text("自动上传成功后，超过保留份数的旧 Android 备份会被删除。请先确认自己的 WebDAV 服务能够正常上传、下载和恢复。") },
+        text = { Text("自动上传成功后，超过保留份数的最旧备份会被删除；题库与答题记录、最新一份都不会删。请先确认自己的 WebDAV 服务能正常上传、下载和恢复。") },
         confirmButton = { TextButton(onClick = { confirmDeletion = false; settings = settings.copy(deleteOldBackups = true) }) { Text("确认开启") } },
         dismissButton = { TextButton(onClick = { confirmDeletion = false }) { Text("取消") } })
 }

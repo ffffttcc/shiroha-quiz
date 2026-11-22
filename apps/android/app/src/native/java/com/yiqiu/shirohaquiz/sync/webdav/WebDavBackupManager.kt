@@ -465,6 +465,39 @@ class WebDavBackupManager private constructor(
     }
 
     /** UI must supply true only after its second confirmation; this module has no dialog UI. */
+    /**
+     * 手动「立即清理旧备份」：逐条删除，单条失败不中断，返回（已删, 失败）。
+     * 候选由 [BackupRotation.planCleanup] 给出——同步对象与最新一份在那里已被排除。
+     */
+    suspend fun deleteBackupsForRotation(candidates: List<WebDavBackupEntry>): Pair<Int, Int> =
+        withContext(Dispatchers.IO) {
+            if (candidates.isEmpty()) return@withContext 0 to 0
+            val client = try { clientForSavedSettings() } catch (error: Exception) {
+                return@withContext 0 to candidates.size
+            }
+            val results = mutableListOf<Boolean>()
+            for (entry in candidates) {
+                // 二次保险：万一调用方传错，也不许删同步对象。
+                if (BackupRotation.isSyncObject(entry.fileName)) {
+                    results += false
+                    continue
+                }
+                val outcome = try {
+                    client.deleteBackup(entry)
+                    runCatching { client.deleteMetadata(entry.fileName) }
+                    mutableBackups.value = mutableBackups.value.filterNot { it.fileName == entry.fileName }
+                    true
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (error: Exception) {
+                    Log.w("WebDavTask", "rotation delete failed: ${entry.fileName}", error)
+                    false
+                }
+                results += outcome
+            }
+            BackupRotation.tally(results)
+        }
+
     fun deleteBackup(entry: WebDavBackupEntry, userConfirmedTwice: Boolean): Boolean {
         if (!userConfirmedTwice) return false
         return start(WebDavTaskKind.DELETE, entry.fileName) { work ->

@@ -102,6 +102,9 @@ fun WebDavBackupScreen(onBack: () -> Unit) {
     var customMinutesInput by rememberSaveable { mutableStateOf("") }
     var syncAppSettings by remember { mutableStateOf(AppSettingsSyncPrefs.isEnabled(context)) }
     var confirmLogout by remember { mutableStateOf(false) }
+    var keepCount by remember { mutableStateOf(WebDavAutoBackup.load(context).keepCount) }
+    var cleanupPlan by remember { mutableStateOf<List<WebDavBackupEntry>>(emptyList()) }
+    var cleaning by remember { mutableStateOf(false) }
 
     val clipboard = LocalClipboardManager.current
     val busy = task?.stage == WebDavTaskStage.RUNNING || task?.stage == WebDavTaskStage.CANCELLING
@@ -288,6 +291,22 @@ fun WebDavBackupScreen(onBack: () -> Unit) {
                 onRestore = { entry -> run { manager.prepareRestore(entry) } }
             )
 
+            BackupCleanupCard(
+                entries = entries,
+                keepCount = keepCount,
+                busy = busy || cleaning,
+                onKeepCountChange = { value ->
+                    val current = WebDavAutoBackup.load(context)
+                    runCatching { WebDavAutoBackup.save(context, current.copy(keepCount = value)) }
+                        .onSuccess { keepCount = value; message = "保留最近 $value 份。" }
+                        .onFailure { message = "设置没保存成功，稍后再试。" }
+                },
+                onRequestCleanup = {
+                    val plan = BackupRotation.planCleanup(entries, keepCount)
+                    if (plan.isEmpty()) message = "没有需要清理的旧备份。" else cleanupPlan = plan
+                }
+            )
+
             GlassCard {
                 Text("自动同步", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
                 Text("开着就自动把改动传到云端，换设备、重装都不丢。",
@@ -455,6 +474,35 @@ fun WebDavBackupScreen(onBack: () -> Unit) {
         TextButton(onClick = onBack) { Text("返回数据管理") }
     }
 
+    if (cleanupPlan.isNotEmpty()) {
+        AlertDialog(
+            onDismissRequest = { cleanupPlan = emptyList() },
+            title = { Text("清理 ${cleanupPlan.size} 份旧备份？") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text("云端完整备份 ${entries.count { BackupRotation.isFullBackup(it) }} 份，保留最近 $keepCount 份。下面这些会被删除；题库与答题记录、最新一份都不动：")
+                    cleanupPlan.forEach { entry ->
+                        Text("· ${CloudSyncUiModel.backupTitle(entry)} · ${"%.1f".format(entry.sizeBytes / 1048576.0)} MB",
+                            style = MaterialTheme.typography.bodySmall)
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(enabled = !cleaning, onClick = {
+                    val plan = cleanupPlan
+                    cleanupPlan = emptyList()
+                    cleaning = true
+                    scope.launch {
+                        val (deleted, failed) = manager.deleteBackupsForRotation(plan)
+                        message = BackupRotation.summary(deleted, failed, manager.backups.value.count { BackupRotation.isFullBackup(it) })
+                        cleaning = false
+                        manager.refreshBackups()
+                    }
+                }) { Text("确认删除") }
+            },
+            dismissButton = { TextButton(onClick = { cleanupPlan = emptyList() }) { Text("取消") } }
+        )
+    }
     if (confirmLogout) {
         AlertDialog(
             onDismissRequest = { confirmLogout = false },
@@ -582,6 +630,38 @@ private fun LegacyRecoveryCodeSection(enabled: Boolean, onReveal: () -> Unit, ha
         }
         Text("仅用于打开很早以前加密的云端备份；现在换了设备只填账号密码就能解密。",
             style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+}
+
+@Composable
+private fun BackupCleanupCard(
+    entries: List<WebDavBackupEntry>,
+    keepCount: Int,
+    busy: Boolean,
+    onKeepCountChange: (Int) -> Unit,
+    onRequestCleanup: () -> Unit
+) {
+    val fullCount = entries.count { BackupRotation.isFullBackup(it) }
+    val removable = BackupRotation.planCleanup(entries, keepCount).size
+    GlassCard {
+        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text("备份与清理", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
+            Text("当前云端 $fullCount 份 · 保留最近 $keepCount 份",
+                style = MaterialTheme.typography.bodyMedium)
+            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                BackupRotation.KEEP_OPTIONS.forEach { count ->
+                    TextButton(enabled = !busy, onClick = { onKeepCountChange(count) }) {
+                        Text(if (count == keepCount) "· 保留 $count 份" else "保留 $count 份")
+                    }
+                }
+            }
+            Text("超出的最旧备份会被自动删除；题库、答题记录和最新一份永不删除。",
+                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Button(enabled = !busy && removable > 0, onClick = onRequestCleanup,
+                modifier = Modifier.fillMaxWidth()) {
+                Text(if (removable > 0) "立即清理旧备份（可删 $removable 份）" else "没有可清理的旧备份")
+            }
+        }
     }
 }
 

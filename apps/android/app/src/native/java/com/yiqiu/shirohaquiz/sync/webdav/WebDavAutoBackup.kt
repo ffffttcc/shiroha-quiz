@@ -18,8 +18,8 @@ data class WebDavAutoBackupSettings(
     val intervalDays: Int = 0,
     val wifiOnly: Boolean = true,
     val chargingOnly: Boolean = false,
-    val keepCount: Int = 10,
-    val deleteOldBackups: Boolean = false
+    val keepCount: Int = BackupRotation.DEFAULT_KEEP,
+    val deleteOldBackups: Boolean = true
 )
 
 object WebDavAutoBackup {
@@ -30,11 +30,17 @@ object WebDavAutoBackup {
         val prefs = preferences(context)
         return WebDavAutoBackupSettings(prefs.getInt("days", 0).takeIf { it in listOf(0, 1, 7) } ?: 0,
             prefs.getBoolean("wifi", true), prefs.getBoolean("charging", false),
-            prefs.getInt("keep", 10).takeIf { it in listOf(5, 10, 20) } ?: 10, prefs.getBoolean("delete", false))
+            run {
+                // 旧版本存过 20：折算成 10 并写回，避免每轮重复转换。
+                val raw = prefs.getInt("keep", BackupRotation.DEFAULT_KEEP)
+                val keep = BackupRotation.normalizeKeep(raw)
+                if (keep != raw) preferences(context).edit().putInt("keep", keep).apply()
+                keep
+            }, prefs.getBoolean("delete", true))
     }
 
     fun save(context: Context, settings: WebDavAutoBackupSettings) {
-        require(settings.intervalDays in listOf(0, 1, 7) && settings.keepCount in listOf(5, 10, 20))
+        require(settings.intervalDays in listOf(0, 1, 7) && settings.keepCount in BackupRotation.KEEP_OPTIONS)
         if (settings.intervalDays > 0) {
             val manager = WebDavBackupManager.getInstance(context)
             require(manager.settings.value.rememberPassword && manager.hasPassword()) { "自动备份需要先加密保存 WebDAV 应用密码。" }
@@ -73,11 +79,15 @@ class WebDavAutoBackupWorker(context: Context, params: WorkerParameters) : Corou
             val result = manager.uploadBackupAndAwait() ?: return Result.retry()
             if (settings.deleteOldBackups) {
                 if (!awaitTask(manager, manager::refreshBackups)) return Result.success()
-                val oldBackups = manager.backups.value.filter { it.source == "android" && it.integrityAvailable }
-                    .sortedByDescending { it.createdAt ?: 0 }.drop(settings.keepCount)
-                for (entry in oldBackups) {
-                    if (entry.fileName == result.entry.fileName) continue
-                    if (!awaitTask(manager) { manager.deleteBackup(entry, userConfirmedTwice = true) }) break
+                // 清理只碰完整备份包；同步对象与最新一份由 planCleanup 排除。
+                val stale = BackupRotation.planCleanup(
+                    manager.backups.value,
+                    settings.keepCount,
+                    protectedFileNames = setOf(result.entry.fileName)
+                )
+                for (entry in stale) {
+                    // 单条失败不再中断整批：剩下的照删，失败留给下一轮。
+                    awaitTask(manager) { manager.deleteBackup(entry, userConfirmedTwice = true) }
                 }
             }
             return Result.success()
