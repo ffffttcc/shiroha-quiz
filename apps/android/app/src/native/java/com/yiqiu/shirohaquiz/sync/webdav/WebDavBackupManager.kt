@@ -114,25 +114,36 @@ class WebDavBackupManager private constructor(
             renameLocalBank = { bankId, newName -> QuizRepository.renameBank(appContext, bankId, newName) }
         )
         try {
-            // 一次性全量迁移：把仍是旧恢复码加密的云端对象换成凭据钥匙，
-            // 否则没有旧码的新设备永远解不开。成功才置标记，失败下一轮重试。
+            // 两段一次性迁移**互相独立**（各自一个标记、各自持闸、绝不嵌套）：
+            // 真机教训——备份迁移曾被嵌在「同步对象迁移」的 if 里，外层标记早已置 true，
+            // 于是备份迁移一次都没跑。判据抽成 SyncMigrationPlan 后由单测钉住。
             var migrationNote = ""
-            if (keys.hasLegacy && !store.keyMigrationDone()) {
-                // 迁移必须与 engine.run() 一样受单写者闸门保护：手点 + 定时任务同时触发时，
-                // 两轮迁移会并发写同一批对象，rclone 直接回 423「资源已被锁定」。
-                val migration = com.yiqiu.shirohaquiz.sync.sync.SyncWriteGate.withLock {
+            val plan = com.yiqiu.shirohaquiz.sync.sync.SyncMigrationPlan.of(
+                hasLegacy = keys.hasLegacy,
+                objectsDone = store.keyMigrationDone(),
+                backupsDone = store.backupKeyMigrationDone()
+            )
+            if (plan.migrateObjects) {
+                val objects = com.yiqiu.shirohaquiz.sync.sync.SyncWriteGate.withLock {
                     engine.migrateAllToPrimaryKey { done, total ->
                         store.setSyncProgress("正在迁移旧版加密对象：已迁移 $done/$total")
-                    } to (0 to null as String?)
+                    }
                 }
-                val objects = migration.first
-                val (backupMigrated, backupFailure) = migration.second
                 if (objects.failedObject != null) {
                     store.recordFailure(objects.message)
                     return@withContext com.yiqiu.shirohaquiz.sync.sync.SyncEngine.Report(
                         ok = false, uploaded = 0, downloaded = 0, conflicts = 0,
                         message = objects.message
                     )
+                }
+                store.setKeyMigrationDone(true)
+                migrationNote = "（${objects.message}）"
+            }
+            if (plan.migrateBackups) {
+                val (backupMigrated, backupFailure) = com.yiqiu.shirohaquiz.sync.sync.SyncWriteGate.withLock {
+                    migrateBackupPackages(client) { done, total ->
+                        store.setSyncProgress("正在迁移旧版完整备份：已迁移 $done/$total")
+                    }
                 }
                 if (backupFailure != null) {
                     val text = "完整备份迁移中断：$backupFailure"
@@ -142,27 +153,8 @@ class WebDavBackupManager private constructor(
                         message = text
                     )
                 }
-                store.setKeyMigrationDone(true)
-                migrationNote = "（${objects.message}）"
-
-                // 完整备份包用**独立标记**：它的迁移不能被「同步对象已迁完」挡住。
-                if (keys.hasLegacy && !store.backupKeyMigrationDone()) {
-                    val (backupMigrated, backupFailure) = com.yiqiu.shirohaquiz.sync.sync.SyncWriteGate.withLock {
-                        migrateBackupPackages(client) { done, total ->
-                            store.setSyncProgress("正在迁移旧版完整备份：已迁移 $done/$total")
-                        }
-                    }
-                    if (backupFailure != null) {
-                        val text = "完整备份迁移中断：$backupFailure"
-                        store.recordFailure(text)
-                        return@withContext com.yiqiu.shirohaquiz.sync.sync.SyncEngine.Report(
-                            ok = false, uploaded = 0, downloaded = 0, conflicts = 0,
-                            message = text
-                        )
-                    }
-                    store.setBackupKeyMigrationDone(true)
-                    if (backupMigrated > 0) migrationNote += "（完整备份迁移 $backupMigrated 份）"
-                }
+                store.setBackupKeyMigrationDone(true)
+                if (backupMigrated > 0) migrationNote += "（完整备份迁移 $backupMigrated 份）"
             }
             engine.run().let { report ->
                 recordSyncFailure(store, report)
