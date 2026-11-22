@@ -52,7 +52,7 @@ class WebDavEncryptedDownloadTest {
     /** ① `.zip.enc` 用「明文摘要」当期望值也必须能下载成功（不比密文哈希）。 */
     @Test
     fun encryptedBackupDownloadsEvenWithPlaintextHashInName() {
-        val name = WebDavPaths.newBackupName(1_700_000_000_000L, "0.9.16", sha(plaintextHex), encrypt = true)
+        val name = WebDavPaths.newBackupName(1_700_000_000_000L, "0.9.16", sha(plaintextHex), encrypted = true)
         client.uploadAtomic(tempFile(ciphertext), name)
         val entry = WebDavBackupEntry(
             fileName = name,
@@ -80,7 +80,7 @@ class WebDavEncryptedDownloadTest {
     /** ③ 非加密对象仍按字节哈希严格校验，不许放宽。 */
     @Test
     fun plainBackupStillVerifiesByteHash() {
-        val name = WebDavPaths.newBackupName(1_700_000_000_000L, "0.9.16", sha(plaintextHex), encrypt = false)
+        val name = WebDavPaths.newBackupName(1_700_000_000_000L, "0.9.16", sha(plaintextHex), encrypted = false)
         val wrongHex = "11".repeat(32)
         client.uploadAtomic(tempFile(ciphertext), name)
         val entry = WebDavBackupEntry(
