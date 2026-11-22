@@ -121,7 +121,15 @@ class SyncEngine(
             var downloaded = 0
             plan.downloads.forEach { entry ->
                 val decoded = pending.getValue(entry.key)
-                applyRemoteBank(decoded.groupName, decoded.name, decoded.questions)
+                // 落盘失败必须显式失败：以前忽略返回值还照样 downloaded++，
+                // 结果下一轮又发现「本地没有这个库」→ 再下一次同样的对象（真机死循环）。
+                val applied = applyRemoteBank(decoded.groupName, decoded.name, decoded.questions)
+                if (!applied) {
+                    return@runLocked Report(
+                        ok = false,
+                        message = "题库「${decoded.name}」写入本地失败，已停止本轮同步（不会反复重下）。"
+                    )
+                }
                 downloaded++
             }
             var conflicts = 0

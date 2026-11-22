@@ -63,7 +63,14 @@ class SyncWorker(context: Context, params: WorkerParameters) : CoroutineWorker(c
         }
         return try {
             val report = manager.syncNow()
-            if (report.ok) Result.success() else Result.retry()
+            if (report.ok) return Result.success()
+            // 重试有上限：连续失败达到上限就停下并留下可见错误，
+            // 否则同一批对象会被反复拉取（真机表现为界面一直「正在登录」）。
+            if (runAttemptCount + 1 >= MAX_ATTEMPTS) {
+                store.recordFailure(report.message)
+                return Result.success()
+            }
+            return Result.retry()
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (error: Exception) {
@@ -71,6 +78,11 @@ class SyncWorker(context: Context, params: WorkerParameters) : CoroutineWorker(c
             store.recordFailure("${error::class.java.simpleName}: ${error.message}")
             Result.retry()
         }
+    }
+
+    private companion object {
+        /** 同一轮同步最多尝试次数（含首次）。到顶就停止重试，把错误留给用户看。 */
+        const val MAX_ATTEMPTS = 3
     }
 
     private fun isUnmetered(): Boolean {

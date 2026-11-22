@@ -94,10 +94,15 @@ class WebDavBackupManager private constructor(
         val keys = syncKeys()
         // 数据安全：必须先把所有库的题目体加载进来，否则「未加载的库」会被算成空库哈希并上传。
         val loadFailures = QuizRepository.ensureAllBanksLoaded()
-        val syncableBanks = QuizRepository.banks.filterNot { bank -> bank.id in loadFailures }
-        com.yiqiu.shirohaquiz.sync.sync.SyncBankGuard.requireLoaded(syncableBanks) { bankId ->
-            QuizRepository.indexedQuestionCount(bankId)
-        }
+        // 未加载的库（索引声明有题数但题目体为空）不再让整轮抛错：
+        // 新设备首次同步时这类库可能大量存在，抛错会导致整轮失败→反复重试→界面卡死。
+        // 改为本轮跳过并在 Report 点名；**安全语义不变**——它们绝不会被当成空库上传。
+        val unloadedViolations = com.yiqiu.shirohaquiz.sync.sync.SyncBankGuard
+            .violations(QuizRepository.banks.filterNot { bank -> bank.id in loadFailures }) { bankId ->
+                QuizRepository.indexedQuestionCount(bankId)
+            }
+            .map { it.id }
+            .toSet()
         // 记录事件必须注入：漏了就会「同步成功但记录片 +0」（本工程第三次同类事故）。
         val recordStore = com.yiqiu.shirohaquiz.sync.records.RecordEventStore.forContext(appContext)
         val engine = com.yiqiu.shirohaquiz.sync.sync.buildSyncEngine(
@@ -107,7 +112,11 @@ class WebDavBackupManager private constructor(
             declaredQuestionCount = { bankId -> QuizRepository.indexedQuestionCount(bankId) },
             recordStore = recordStore,
             // 用过滤后的快照：加载失败的库本轮不上传（下面会在 Report 里点名）
-            localBanks = { QuizRepository.banks.filterNot { bank -> bank.id in loadFailures } },
+            localBanks = {
+                QuizRepository.banks.filterNot { bank ->
+                    bank.id in loadFailures || bank.id in unloadedViolations
+                }
+            },
             applyRemoteBank = { groupName, name, questions ->
                 QuizRepository.applySyncedBank(appContext, groupName, name, questions)
             },
@@ -158,8 +167,9 @@ class WebDavBackupManager private constructor(
             }
             engine.run().let { report ->
                 recordSyncFailure(store, report)
-                val base = if (loadFailures.isEmpty()) report else report.copy(
-                    message = report.message + "（跳过 ${loadFailures.size} 个加载失败的库）"
+                val skippedCount = loadFailures.size + unloadedViolations.size
+                val base = if (skippedCount == 0) report else report.copy(
+                    message = report.message + "（跳过 $skippedCount 个未就绪的库）"
                 )
                 val withMigration = if (migrationNote.isEmpty()) base else base.copy(message = base.message + migrationNote)
                 if (withMigration.migrated > 0) {
