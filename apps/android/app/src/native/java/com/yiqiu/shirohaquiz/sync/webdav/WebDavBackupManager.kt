@@ -97,7 +97,7 @@ class WebDavBackupManager private constructor(
         val recordStore = com.yiqiu.shirohaquiz.sync.records.RecordEventStore.forContext(appContext)
         val engine = com.yiqiu.shirohaquiz.sync.sync.buildSyncEngine(
             client = client,
-            recoveryCode = recoveryCodes.ensure(),
+            keys = syncKeys(),
             state = store,
             declaredQuestionCount = { bankId -> QuizRepository.indexedQuestionCount(bankId) },
             recordStore = recordStore,
@@ -111,9 +111,14 @@ class WebDavBackupManager private constructor(
         try {
             engine.run().let { report ->
                 recordSyncFailure(store, report)
-                if (loadFailures.isEmpty()) report else report.copy(
+                val base = if (loadFailures.isEmpty()) report else report.copy(
                     message = report.message + "（跳过 ${loadFailures.size} 个加载失败的库）"
                 )
+                if (base.migrated > 0) {
+                    base.copy(message = base.message + "（已迁移 ${base.migrated} 个旧版加密对象）")
+                } else {
+                    base
+                }
             }
         } catch (error: Exception) {
             // 异常同样不吞：原文落盘，并把原文作为本轮结果返回，UI 照原句显示。
@@ -570,6 +575,25 @@ class WebDavBackupManager private constructor(
                     mutableTask.value = mutableTask.value?.copy(transferredBytes = bytes, totalBytes = total)
                 }
             }
+        }
+    }
+
+    /**
+     * 同步钥匙：**账号 + 密码**派生（首辅拍板），旧恢复码只作兼容兜底。
+     * 没有已存密码时退回旧码单钥匙（老设备仍能跑），两者都没有就明确报错。
+     */
+    private fun syncKeys(): com.yiqiu.shirohaquiz.sync.sync.SyncKeys {
+        val settings = settingsStore.load()
+        val password = settingsStore.loadPassword()
+        val legacyCode = recoveryCodes.existing()
+        return when {
+            !password.isNullOrEmpty() ->
+                com.yiqiu.shirohaquiz.sync.sync.SyncKeys.fromCredentials(settings.username, password, legacyCode)
+            legacyCode != null ->
+                com.yiqiu.shirohaquiz.sync.sync.SyncKeys.fromLegacyRecoveryCode(legacyCode)
+            else -> throw com.yiqiu.shirohaquiz.sync.webdav.WebDavException(
+                "请先填写 WebDAV 密码并保存配置：云端数据的密钥由「账号 + 密码」派生。"
+            )
         }
     }
 

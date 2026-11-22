@@ -201,9 +201,10 @@ fun WebDavBackupScreen(onBack: () -> Unit) {
                         null
                     }
                 }
-            }) { Text(if (manager.hasRecoveryCode()) "查看恢复码" else "生成恢复码") }
-            Text("恢复码丢失后，已加密上传的云端备份将永久无法解密，也无法找回。",
-                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+            }) { Text((if (manager.hasRecoveryCode()) "查看恢复码" else "生成恢复码") + "（旧版兼容，新版不需要）") }
+            Text("新版密钥由「账号 + 密码」派生：新设备只要填同一组地址/账号/密码即可解密，不需要搬运恢复码。" +
+                "恢复码仅用于打开旧版加密的数据；改密码等于换钥匙，请先在本机完成重加密再改服务器密码。",
+                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         GlassCard {
             Text("自动同步", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)

@@ -46,7 +46,7 @@ object SyncWriteGate {
  */
 class SyncEngine(
     private val client: WebDavClient,
-    private val recoveryCode: String,
+    private val keys: SyncKeys,
     private val state: SyncStateStore,
     private val localBanks: () -> List<QuizBank>,
     private val applyRemoteBank: (groupName: String, name: String, questions: List<Question>) -> Unit,
@@ -64,7 +64,9 @@ class SyncEngine(
         val conflicts: Int,
         val message: String,
         val recordUploaded: Int = 0,
-        val recordDownloaded: Int = 0
+        val recordDownloaded: Int = 0,
+        /** 本轮用旧恢复码解开并已用账号密码钥匙重加密覆盖上传的对象数。 */
+        val migrated: Int = 0
     )
 
     private data class RecordOutcome(
@@ -74,7 +76,13 @@ class SyncEngine(
         val failure: String?
     )
 
-    fun run(): Report = SyncWriteGate.withLock { runLocked() }
+    /** 本轮重加密迁移的对象数（每个 run 重置）。 */
+    private var migratedCount = 0
+
+    fun run(): Report = SyncWriteGate.withLock {
+        migratedCount = 0
+        runLocked()
+    }
 
     private fun runLocked(): Report {
         val at = clockMillis()
@@ -145,7 +153,7 @@ class SyncEngine(
                 val bank = entry.localBank ?: return@forEach
                 val hash = SyncIdentity.contentHash(bank)
                 val payload = SyncBankCodec.encode(SyncIdentity.normalizeGroupName(bank.groupName), bank.name, bank.questions)
-                val encrypted = SyncPayloadCipher.encrypt(payload, recoveryCode, SyncPayloadCipher.aadForContent(hash))
+                val encrypted = keys.encrypt(payload, SyncPayloadCipher.aadForContent(hash))
                 client.putSyncObject(SyncObjects.bankName(hash), encrypted)
                 uploaded++
             }
@@ -168,7 +176,7 @@ class SyncEngine(
                     recordTombstones = recordTombstones
                 )
                 if (changed || remoteManifest.version < SyncManifest.CURRENT_VERSION) {
-                    client.putSyncObject(SyncObjects.MANIFEST, SyncManifestCodec.encrypt(merged, recoveryCode))
+                    client.putSyncObject(SyncObjects.MANIFEST, keys.encryptManifest(merged))
                 }
                 state.advanceEpoch(nextEpoch)
                 state.setForceUploadLocal(false)
@@ -185,7 +193,8 @@ class SyncEngine(
                     conflicts = conflicts,
                     message = message(uploaded, downloaded, conflicts),
                     recordUploaded = record.uploaded,
-                    recordDownloaded = record.downloaded
+                    recordDownloaded = record.downloaded,
+                    migrated = migratedCount
                 )
             } else {
                 // 分片级「部分成功」：已上传的分片有效但 manifest 不前进，避免指向缺失对象。
@@ -213,14 +222,27 @@ class SyncEngine(
     private fun message(uploaded: Int, downloaded: Int, conflicts: Int): String =
         if (uploaded + downloaded + conflicts == 0) "已是最新" else "上传 $uploaded / 下载 $downloaded / 冲突 $conflicts"
 
-    private fun fetchManifest(): SyncManifest? =
-        client.getSyncObject(SyncObjects.MANIFEST)?.let { SyncManifestCodec.decrypt(it, recoveryCode) }
+    private fun fetchManifest(): SyncManifest? {
+        val raw = client.getSyncObject(SyncObjects.MANIFEST) ?: return null
+        val opened = keys.openManifest(raw)
+        if (opened.usedLegacy) {
+            // 迁移：这个 manifest 还是旧恢复码加密的，立刻用新钥匙覆盖。
+            runCatching { client.putSyncObject(SyncObjects.MANIFEST, keys.encryptManifest(opened.manifest)) }
+                .onSuccess { migratedCount++ }
+        }
+        return opened.manifest
+    }
 
     private fun fetchBank(contentHash: String): DecodedSyncBank {
         val raw = client.getSyncObject(SyncObjects.bankName(contentHash))
             ?: throw WebDavException("云端缺少题库数据（$contentHash），已放弃本次同步。")
-        val plain = SyncPayloadCipher.decrypt(raw, recoveryCode, SyncPayloadCipher.aadForContent(contentHash))
-        return SyncBankCodec.decode(plain)
+        val aad = SyncPayloadCipher.aadForContent(contentHash)
+        val opened = keys.open(raw, aad)
+        if (opened.usedLegacy) {
+            runCatching { client.putSyncObject(SyncObjects.bankName(contentHash), keys.encrypt(opened.plaintext, aad)) }
+                .onSuccess { migratedCount++ }
+        }
+        return SyncBankCodec.decode(opened.plaintext)
     }
 
     /**
@@ -266,8 +288,13 @@ class SyncEngine(
             try {
                 val raw = client.getSyncObject(SyncObjects.recordName(shardHash))
                     ?: throw WebDavException("云端缺少记录分片（$shardHash）")
-                val plain = SyncPayloadCipher.decrypt(raw, recoveryCode, SyncPayloadCipher.aadForContent(shardHash))
-                applyRemoteEvents(RecordShard.decode(plain))
+                val aad = SyncPayloadCipher.aadForContent(shardHash)
+                val opened = keys.open(raw, aad)
+                if (opened.usedLegacy) {
+                    runCatching { client.putSyncObject(SyncObjects.recordName(shardHash), keys.encrypt(opened.plaintext, aad)) }
+                        .onSuccess { migratedCount++ }
+                }
+                applyRemoteEvents(RecordShard.decode(opened.plaintext))
                 downloaded++
             } catch (error: Exception) {
                 // 缺片/坏片：跳过，别让整轮炸掉；manifest 稍后不推进，下轮重试。
@@ -277,7 +304,7 @@ class SyncEngine(
 
         localShards.forEach { (shardHash, payload) ->
             if (shardHash in remote.recordShards) return@forEach
-            val encrypted = SyncPayloadCipher.encrypt(payload, recoveryCode, SyncPayloadCipher.aadForContent(shardHash))
+            val encrypted = keys.encrypt(payload, SyncPayloadCipher.aadForContent(shardHash))
             client.putSyncObject(SyncObjects.recordName(shardHash), encrypted)
             uploaded++
         }

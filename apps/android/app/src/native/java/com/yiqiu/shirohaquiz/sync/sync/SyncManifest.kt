@@ -61,12 +61,16 @@ object SyncPayloadCipher {
         return ByteArray(hex.length / 2) { index -> hex.substring(index * 2, index * 2 + 2).toInt(16).toByte() }
     }
 
-    fun encrypt(plaintext: ByteArray, recoveryCode: String, aad: ByteArray): ByteArray {
+    fun encrypt(plaintext: ByteArray, recoveryCode: String, aad: ByteArray): ByteArray =
+        encryptWithKey(plaintext, BackupEncryption.deriveKey(recoveryCode), aad)
+
+    /** 直接用钥匙字节加密（账号密码派生方案走这里，避免每次重跑 21 万轮 KDF）。 */
+    fun encryptWithKey(plaintext: ByteArray, key: ByteArray, aad: ByteArray): ByteArray {
         val nonce = ByteArray(NONCE_LENGTH).also(SecureRandom()::nextBytes)
         val cipher = Cipher.getInstance("AES/GCM/NoPadding")
         cipher.init(
             Cipher.ENCRYPT_MODE,
-            SecretKeySpec(BackupEncryption.deriveKey(recoveryCode), "AES"),
+            SecretKeySpec(key, "AES"),
             GCMParameterSpec(TAG_BITS, nonce)
         )
         cipher.updateAAD(aad)
@@ -81,7 +85,11 @@ object SyncPayloadCipher {
         }.toByteArray()
     }
 
-    fun decrypt(payload: ByteArray, recoveryCode: String, aad: ByteArray): ByteArray {
+    fun decrypt(payload: ByteArray, recoveryCode: String, aad: ByteArray): ByteArray =
+        decryptWithKey(payload, BackupEncryption.deriveKey(recoveryCode), aad)
+
+    /** 直接用钥匙字节解密（失败抛 BackupDecryptException）。 */
+    fun decryptWithKey(payload: ByteArray, key: ByteArray, aad: ByteArray): ByteArray {
         if (payload.size < HEADER_FIXED + NONCE_LENGTH + TAG_BYTES) {
             throw BackupDecryptException("同步数据长度异常，可能被截断。")
         }
@@ -96,7 +104,7 @@ object SyncPayloadCipher {
         val cipher = Cipher.getInstance("AES/GCM/NoPadding")
         cipher.init(
             Cipher.DECRYPT_MODE,
-            SecretKeySpec(BackupEncryption.deriveKey(recoveryCode), "AES"),
+            SecretKeySpec(key, "AES"),
             GCMParameterSpec(TAG_BITS, nonce)
         )
         cipher.updateAAD(aad)
@@ -269,6 +277,12 @@ object SyncManifestCodec {
     fun encrypt(manifest: SyncManifest, recoveryCode: String): ByteArray =
         SyncPayloadCipher.encrypt(toJson(manifest), recoveryCode, SyncPayloadCipher.aadForManifest())
 
+    fun encryptWithKey(manifest: SyncManifest, key: ByteArray): ByteArray =
+        SyncPayloadCipher.encryptWithKey(toJson(manifest), key, SyncPayloadCipher.aadForManifest())
+
     fun decrypt(payload: ByteArray, recoveryCode: String): SyncManifest =
         fromJson(SyncPayloadCipher.decrypt(payload, recoveryCode, SyncPayloadCipher.aadForManifest()))
+
+    fun decryptWithKey(payload: ByteArray, key: ByteArray): SyncManifest =
+        fromJson(SyncPayloadCipher.decryptWithKey(payload, key, SyncPayloadCipher.aadForManifest()))
 }

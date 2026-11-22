@@ -53,7 +53,7 @@ class RecordSyncWiringTest {
         val store = storeWithTwoEvents(dir)
         val engine = buildSyncEngine(
             client = client(dav),
-            recoveryCode = recoveryCode,
+            keys = SyncKeys.fromLegacyRecoveryCode(recoveryCode),
             state = SyncStateStore(RuntimeEnvironment.getApplication()),
             declaredQuestionCount = { 0 },
             recordStore = store,
@@ -77,7 +77,7 @@ class RecordSyncWiringTest {
         val dav = WebDavClientTest.FakeDav()
         val engine = buildSyncEngine(
             client = client(dav),
-            recoveryCode = recoveryCode,
+            keys = SyncKeys.fromLegacyRecoveryCode(recoveryCode),
             state = SyncStateStore(RuntimeEnvironment.getApplication()),
             declaredQuestionCount = { 0 },
             recordStore = null,

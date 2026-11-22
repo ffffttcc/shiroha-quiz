@@ -21,7 +21,7 @@ import com.yiqiu.shirohaquiz.sync.webdav.WebDavClient
  */
 internal fun buildSyncEngine(
     client: WebDavClient,
-    recoveryCode: String,
+    keys: SyncKeys,
     state: SyncStateStore,
     /** 索引声明的题数提供者（空库护栏用）。**故意不给默认值**：逼调用方显式交出来。 */
     declaredQuestionCount: (bankId: String) -> Int,
@@ -36,7 +36,7 @@ internal fun buildSyncEngine(
     if (recordStore == null) {
         return SyncEngine(
             client = client,
-            recoveryCode = recoveryCode,
+            keys = keys,
             state = state,
             localBanks = localBanks,
             applyRemoteBank = applyRemoteBank,
@@ -45,7 +45,7 @@ internal fun buildSyncEngine(
     }
     return SyncEngine(
         client = client,
-        recoveryCode = recoveryCode,
+        keys = keys,
         state = state,
         localBanks = localBanks,
         applyRemoteBank = applyRemoteBank,

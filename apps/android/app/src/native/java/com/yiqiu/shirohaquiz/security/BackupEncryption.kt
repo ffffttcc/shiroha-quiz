@@ -71,15 +71,27 @@ object BackupEncryption {
     fun normalizeRecoveryCode(code: String): String =
         code.uppercase().filter { it.isLetterOrDigit() }
 
+    /** 旧恢复码派生（长度必须 >= 32，保持原有语义不变）。 */
     fun deriveKey(recoveryCode: String): ByteArray {
         val normalized = normalizeRecoveryCode(recoveryCode)
         require(normalized.length >= RECOVERY_CODE_LENGTH) { "恢复码长度不足，无法派生密钥。" }
+        return deriveKeyFromMaterial(normalized)
+    }
+
+    /**
+     * 用**任意长度**的密钥材料派生（不归一、不做长度校验）。
+     *
+     * 这是「账号 + 密码」方案要用的入口：密码可能只有 6~20 位，绝不能被恢复码那条
+     * `>= 32` 的规则拒掉。材料串由调用方保证已归一化（见 [credentialMaterial]）。
+     */
+    fun deriveKeyFromMaterial(material: String): ByteArray {
+        require(material.isNotEmpty()) { "密钥材料为空，无法派生密钥。" }
         val cacheKey = MessageDigest.getInstance("SHA-256")
-            .digest(normalized.toByteArray(Charsets.UTF_8))
+            .digest(material.toByteArray(Charsets.UTF_8))
             .joinToString("") { "%02x".format(it.toInt() and 0xFF) }
         keyCache[cacheKey]?.let { return it.copyOf() }
         val salt = SALT_PREFIX.toByteArray(Charsets.UTF_8) + byteArrayOf(SALT_VERSION)
-        val spec = PBEKeySpec(normalized.toCharArray(), salt, ITERATIONS, KEY_BITS)
+        val spec = PBEKeySpec(material.toCharArray(), salt, ITERATIONS, KEY_BITS)
         val derived = try {
             SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256").generateSecret(spec).encoded
         } finally {
@@ -88,6 +100,16 @@ object BackupEncryption {
         keyCache[cacheKey] = derived
         return derived.copyOf()
     }
+
+    /**
+     * 凭据 → 密钥材料串：`normalize(username) + "\u0000" + normalize(password)`。
+     *
+     * 为什么先各自归一再加分隔符：`normalizeRecoveryCode` 只保留字母数字，
+     * 若先拼接再归一，分隔符会被吃掉，`("ab","cd")` 与 `("abc","d")` 就会派生出同一把钥匙。
+     * 字母数字被归一成大写后不可能含 `\u0000`，分隔符因此恒定有效。
+     */
+    fun credentialMaterial(username: String, password: String): String =
+        normalizeRecoveryCode(username) + "\u0000" + normalizeRecoveryCode(password)
 
     /**
      * @param plaintextSha256 明文（原始 ZIP）的 SHA256，用于 AAD 与恢复后核对。
