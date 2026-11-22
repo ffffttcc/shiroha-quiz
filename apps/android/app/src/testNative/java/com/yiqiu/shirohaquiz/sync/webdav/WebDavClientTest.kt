@@ -103,8 +103,16 @@ class WebDavClientTest {
             val path = current.url.encodedPath
             when (current.method) {
                 "PUT" -> {
-                    if (files.containsKey(path)) response(current, 412, ByteArray(0))
-                    else { files[path] = Buffer().also { current.body!!.writeTo(it) }.readByteArray(); response(current, 201, ByteArray(0)) }
+                    // 忠实于真实 WebDAV：PUT 同名对象是**覆盖**，只有显式 If-None-Match: * 才拒绝。
+                    // 之前一律 412，导致「重写 manifest」这类合法覆盖在测试里被判失败。
+                    val ifNoneMatch = current.header("If-None-Match") == "*"
+                    val exists = files.containsKey(path)
+                    if (ifNoneMatch && exists) {
+                        response(current, 412, ByteArray(0))
+                    } else {
+                        files[path] = Buffer().also { current.body!!.writeTo(it) }.readByteArray()
+                        response(current, if (exists) 204 else 201, ByteArray(0))
+                    }
                 }
                 "GET" -> files[path]?.let { response(current, 200, it) } ?: response(current, 404, ByteArray(0))
                 "MOVE" -> {
