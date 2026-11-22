@@ -225,9 +225,44 @@ class WebDavClient(
         require(bytes.isNotEmpty() && bytes.size.toLong() <= MAX_SYNC_OBJECT_BYTES) {
             "同步对象为空或超过大小限制。"
         }
-        withResponse(request(fileUrl(fileName), "PUT", bytes.toRequestBody(BINARY)), cancellation) { response ->
-            if (response.code != 200 && response.code != 201 && response.code != 204) failHttp(response.code)
+        putVerified(fileName, bytes, cancellation)
+    }
+
+    /**
+     * 带**上传后校验**与**有限重试**的 PUT。
+     *
+     * 真机事故：某 2.8MB 的 bank blob 被中间层截断在 65536 字节（正好 64 KiB），
+     * 服务器仍回 2xx、上游还记了 `Copied (new)`，直到本地解密才炸 `InvalidTag`。
+     * 所以「拿到 2xx」不等于「写成功了」，必须回读远端大小核对。
+     *
+     * - 校验失败（远端大小 != 本地密文字节数）→ 视为失败并重试；
+     * - 远端**更小**（半截）→ 先删掉再传，否则下一轮会因「远端已存在」被跳过；
+     * - 400 / 408 / 429 / 5xx → 可重试（最多 UPLOAD_ATTEMPTS 次，指数退避），其余错误立即抛。
+     */
+    private fun putVerified(fileName: String, bytes: ByteArray, cancellation: WebDavCancellation) {
+        var lastError: WebDavException? = null
+        for (attempt in 1..UPLOAD_ATTEMPTS) {
+            try {
+                withResponse(request(fileUrl(fileName), "PUT", bytes.toRequestBody(BINARY)), cancellation) { response ->
+                    if (response.code != 200 && response.code != 201 && response.code != 204) failHttp(response.code)
+                }
+                val remoteSize = statFile(fileName, cancellation)?.sizeBytes
+                if (remoteSize == bytes.size.toLong()) return
+                if (remoteSize != null && remoteSize < bytes.size) {
+                    runCatching { deleteSyncObject(fileName, cancellation) }
+                }
+                lastError = WebDavException(
+                    "上传后校验失败：远端 ${remoteSize ?: -1} 字节 / 本地 ${bytes.size} 字节（$fileName）。"
+                )
+            } catch (error: WebDavException) {
+                if (error.httpCode !in RETRYABLE_HTTP_CODES) throw error
+                lastError = error
+            }
+            if (attempt < UPLOAD_ATTEMPTS) {
+                runCatching { Thread.sleep(BACKOFF_BASE_MILLIS shl (attempt - 1)) }
+            }
         }
+        throw lastError ?: WebDavException("上传失败（已重试 $UPLOAD_ATTEMPTS 次）：$fileName")
     }
 
     fun deleteSyncObject(fileName: String, cancellation: WebDavCancellation = WebDavCancellation()): Boolean {
@@ -581,6 +616,12 @@ class WebDavClient(
         private const val MAX_METADATA_BYTES = 2L * 1024 * 1024
         /** 单库题目 JSON 可能远超 sidecar 上限，同步对象单独给一个上限。 */
         private const val MAX_SYNC_OBJECT_BYTES = 32L * 1024 * 1024
+        /** 单个同步对象 PUT 的最多尝试次数（含首次）。 */
+        private const val UPLOAD_ATTEMPTS = 3
+        /** 指数退避基数：300ms → 600ms。 */
+        private const val BACKOFF_BASE_MILLIS = 300L
+        /** 值得重试的上游错误：400（nginx 收到不完整请求）、408、429、5xx。 */
+        private val RETRYABLE_HTTP_CODES = setOf(400, 408, 429, 500, 502, 503, 504)
         private const val MAX_REDIRECTS = 5
         private const val DAV = "DAV:"
         private val BINARY = "application/octet-stream".toMediaType()
