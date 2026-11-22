@@ -1,10 +1,8 @@
 package com.yiqiu.shirohaquiz.sync.sync
 
-import com.yiqiu.shirohaquiz.security.BackupEncryption
 import com.yiqiu.shirohaquiz.sync.webdav.WebDavClient
 import com.yiqiu.shirohaquiz.sync.webdav.WebDavClientTest
 import com.yiqiu.shirohaquiz.sync.webdav.WebDavCredentials
-import okio.Buffer
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
@@ -26,11 +24,8 @@ import org.robolectric.annotation.Config
 class SyncKeyMigrationTest {
 
     private val legacyCode = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
-    private val basePath = "/dav/ShirohaQuiz/Backups/"
 
     private fun hash(n: Int) = "%064x".format(n)
-
-    private fun legacyKey() = BackupEncryption.deriveKey(legacyCode)
 
     private fun client(dav: WebDavClientTest.FakeDav) = WebDavClient(
         "https://dav.example.com/dav/",
@@ -42,18 +37,19 @@ class SyncKeyMigrationTest {
 
     private fun keysWithLegacy() = SyncKeys.fromCredentials("user", "pw", legacyRecoveryCode = legacyCode)
 
-    /** 造一份「全部旧码加密」的云端：manifest + 2 个 bank + 1 个 record 分片。 */
+    /**
+     * 造一份「全部旧码加密」的云端：manifest + 2 个 bank + 1 个 record 分片。
+     * **全部通过 client 自己 PUT**，不硬编码 FakeDav 的路径前缀（上次就栽在这上面）。
+     */
     private fun seedLegacyCloud(dav: WebDavClientTest.FakeDav): List<String> {
         val bankA = hash(11)
         val bankB = hash(22)
         val shard = hash(33)
-        val k = legacyKey()
-        val aadA = SyncPayloadCipher.aadForContent(bankA)
-        val aadB = SyncPayloadCipher.aadForContent(bankB)
-        val aadS = SyncPayloadCipher.aadForContent(shard)
-        dav.files[basePath + SyncObjects.bankName(bankA)] = SyncPayloadCipher.encryptWithKey("bankA".toByteArray(), k, aadA)
-        dav.files[basePath + SyncObjects.bankName(bankB)] = SyncPayloadCipher.encryptWithKey("bankB".toByteArray(), k, aadB)
-        dav.files[basePath + SyncObjects.recordName(shard)] = SyncPayloadCipher.encryptWithKey("shard".toByteArray(), k, aadS)
+        val legacy = SyncKeys.fromLegacyRecoveryCode(legacyCode)
+        val c = client(dav)
+        c.putSyncObject(SyncObjects.bankName(bankA), legacy.encrypt("bankA".toByteArray(), SyncPayloadCipher.aadForContent(bankA)))
+        c.putSyncObject(SyncObjects.bankName(bankB), legacy.encrypt("bankB".toByteArray(), SyncPayloadCipher.aadForContent(bankB)))
+        c.putSyncObject(SyncObjects.recordName(shard), legacy.encrypt("shard".toByteArray(), SyncPayloadCipher.aadForContent(shard)))
         val manifest = SyncManifest(
             deviceId = "dev-1",
             updatedAt = 1L,
@@ -64,7 +60,7 @@ class SyncKeyMigrationTest {
             recordShards = listOf(shard),
             epoch = 5L
         )
-        dav.files[basePath + SyncObjects.MANIFEST] = SyncManifestCodec.encryptWithKey(manifest, k)
+        c.putSyncObject(SyncObjects.MANIFEST, legacy.encryptManifest(manifest))
         return listOf(SyncObjects.bankName(bankA), SyncObjects.bankName(bankB), SyncObjects.recordName(shard))
     }
 
@@ -92,13 +88,13 @@ class SyncKeyMigrationTest {
 
         // 迁移后用「只有主钥匙」的实例必须能解开全部对象
         val primaryOnly = SyncKeys.fromCredentials("user", "pw", legacyRecoveryCode = null)
+        val c = client(dav)
         targets.forEach { name ->
-            val raw = dav.files[basePath + name]!!
+            val raw = c.getSyncObject(name)!!
             val opened = primaryOnly.open(raw, SyncPayloadCipher.aadForContent(name.hashOf()))
             assertEquals(false, opened.usedLegacy)
         }
-        val manifestRaw = dav.files[basePath + SyncObjects.MANIFEST]!!
-        assertNotNull(primaryOnly.openManifest(manifestRaw))
+        assertNotNull(primaryOnly.openManifest(c.getSyncObject(SyncObjects.MANIFEST)!!))
     }
 
     /** 幂等：再跑一次不再迁移任何对象。 */
@@ -128,13 +124,13 @@ class SyncKeyMigrationTest {
         val dav = WebDavClientTest.FakeDav()
         val targets = seedLegacyCloud(dav)
         // 把第二个 bank 换成垃圾字节，两个钥匙都解不开
-        dav.files[basePath + targets[1]] = ByteArray(64) { 7 }
+        client(dav).putSyncObject(targets[1], ByteArray(64) { 7 })
 
-        val manifestBefore = dav.files[basePath + SyncObjects.MANIFEST]!!.copyOf()
+        val manifestBefore = client(dav).getSyncObject(SyncObjects.MANIFEST)!!.copyOf()
         val report = engine(dav, keysWithLegacy()).migrateAllToPrimaryKey()
 
         assertNotNull("应报出失败对象", report.failedObject)
-        assertTrue("manifest 不应被重写", manifestBefore.contentEquals(dav.files[basePath + SyncObjects.MANIFEST]))
+        assertTrue("manifest 不应被重写", manifestBefore.contentEquals(client(dav).getSyncObject(SyncObjects.MANIFEST)))
     }
 
     /** 引用对象缺失（404）不算失败：跳过并在最后重写 manifest。 */
@@ -142,7 +138,7 @@ class SyncKeyMigrationTest {
     fun missingObjectDoesNotAbortMigration() {
         val dav = WebDavClientTest.FakeDav()
         val targets = seedLegacyCloud(dav)
-        dav.files.remove(basePath + targets[2])  // 删掉 record 分片
+        dav.files.keys.filter { it.endsWith(targets[2]) }.forEach { dav.files.remove(it) }  // 删掉 record 分片
 
         val report = engine(dav, keysWithLegacy()).migrateAllToPrimaryKey()
         assertNull("缺对象不应判失败：${report.message}", report.failedObject)
