@@ -1,25 +1,34 @@
-name: Deploy to GitHub Pages
+name: Build web (artifact)
+
+# 原「Deploy to GitHub Pages」永远绿不了：私有仓库不支持 GitHub Pages，
+# configure-pages 会报 `Create Pages site failed / Resource not accessible by integration`，
+# GITHUB_TOKEN 也无法自助开通（付费功能）。因此改为**只打包、不部署**：
+# 把静态站打成 artifact，从 Actions 页面下载即可。
 
 on:
   push:
     branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
-  deploy:
+  web-artifact:
+    name: Package web build
     runs-on: ubuntu-latest
-    permissions:
-      pages: write
-      id-token: write
-    environment:
-      name: github-pages
-      url: ${{ steps.deploy.outputs.page_url }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/configure-pages@v4
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Resolve short sha
+        id: vars
+        run: echo "short_sha=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+
+      - name: Upload web build artifact
+        uses: actions/upload-artifact@v4
         with:
-          enablement: true
-      - uses: actions/upload-pages-artifact@v3
-        with:
+          name: web-build-${{ steps.vars.outputs.short_sha }}
           path: apps/web
-      - id: deploy
-        uses: actions/deploy-pages@v4
+          if-no-files-found: error
+          retention-days: 14
