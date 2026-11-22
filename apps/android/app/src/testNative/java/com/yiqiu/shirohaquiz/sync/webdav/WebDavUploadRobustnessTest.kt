@@ -24,7 +24,8 @@ import java.io.IOException
 class WebDavUploadRobustnessTest {
 
     private val objectName = "shiroha-sync-bank-" + "a".repeat(64) + ".enc"
-    private val payload = ByteArray(4096) { (it % 251).toByte() }
+    /** 必须 > 64 KiB，否则「截断到 65536」等于完整内容，测不出问题。 */
+    private val payload = ByteArray(200_000) { (it % 251).toByte() }
 
     private fun client(fake: TruncatingDav) = WebDavClient(
         "https://dav.example.com/dav/",
@@ -91,10 +92,8 @@ class WebDavUploadRobustnessTest {
         private var putCount = 0
         private var truncated = 0
 
-        fun storedSize(name: String): Long? {
-            val path = "/ShirohaQuiz/Backups/$name"
-            return files[path]?.size?.toLong()
-        }
+        fun storedSize(name: String): Long? =
+            files.entries.firstOrNull { it.key.endsWith(name) }?.value?.size?.toLong()
 
         override fun newCall(request: Request): Call = FakeCall(request) { current ->
             methods += current.method to current.url.encodedPath
