@@ -174,7 +174,7 @@ class WebDavClient(
         cancellation: WebDavCancellation = WebDavCancellation(),
         onProgress: (Long, Long) -> Unit = { _, _ -> }
     ): WebDavTransferResult {
-        require(WebDavPaths.isBackup(entry.fileName)) { "这不是备份文件名：${entry.fileName}" } { "这不是备份文件名：${entry.fileName}" } { "这不是备份文件名：${entry.fileName}" }
+        require(WebDavPaths.isBackup(entry.fileName)) { "这不是备份文件名：${entry.fileName}" }
         if (!entry.integrityAvailable) throw WebDavIntegrityException("备份缺少 SHA256 摘要或完整大小信息，无法安全下载恢复。")
         require(entry.sizeBytes <= maxBackupBytes && !destination.exists()) {
             "下载目标不可用：大小 ${entry.sizeBytes} 超上限 $maxBackupBytes，或目标已存在（${destination.name}）。"

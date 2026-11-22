@@ -23,10 +23,6 @@ data class WebDavSettings(
         val url = WebDavPaths.baseUrl(baseUrl)
         require(username.isNotBlank() && ':' !in username && username.none { it.isISOControl() }) {
             "WebDAV 用户名为空或格式无效。"
-        } {
-            "WebDAV 用户名为空或格式无效。"
-        } {
-            "WebDAV 用户名为空或格式无效。"
         }
         return copy(baseUrl = url.toString(), remoteDirectory = WebDavPaths.directory(remoteDirectory))
     }
