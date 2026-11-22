@@ -152,15 +152,17 @@ fun WebDavBackupScreen(onBack: () -> Unit) {
             endpoint = target
             directory = dir
             rememberPassword = true
-            val report = manager.syncNow()
-            refreshSyncState()
-            if (!report.ok) {
-                message = CloudSyncUiModel.signInError(report.message)
+            // 登录只做登录：保存凭据 → 探目录 → 拉备份列表。
+            // **绝不在登录里触发同步/迁移**：那会让界面停在「正在登录」几分钟，
+            // 用户看到的就是卡死（YG 直接要求）。
+            val reachable = manager.testConnection()
+            if (!reachable) {
+                message = CloudSyncUiModel.signInError("连接不上云端目录，请检查地址与网络后重试。")
                 return@launch
             }
             password = ""
             signedIn = true
-            message = "登录成功，正在读取云端备份。"
+            message = "登录成功，正在读取云端备份列表…"
             manager.refreshBackups()
         }
     }
