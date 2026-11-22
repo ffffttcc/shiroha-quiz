@@ -128,7 +128,7 @@ class WebDavBackupManager private constructor(
                         objects to (0 to null as String?)
                     } else {
                         // 同步对象迁完之后，再迁完整备份包（同一把闸门内，串行执行不嵌套）。
-                        val (backupMigrated, backupFailure) = migrateBackupPackages { done, total ->
+                        val (backupMigrated, backupFailure) = migrateBackupPackages(client) { done, total ->
                             store.setSyncProgress("正在迁移旧版完整备份：已迁移 $done/$total")
                         }
                         objects to (backupMigrated to backupFailure)
@@ -652,7 +652,10 @@ class WebDavBackupManager private constructor(
      * AAD 规则不变（仍用文件名里的明文 sha256），否则旧包全废。
      * 调用方必须已持有 [com.yiqiu.shirohaquiz.sync.sync.SyncWriteGate]（避免并发写同一对象触发 423）。
      */
-    private fun migrateBackupPackages(onProgress: (Int, Int) -> Unit = { _, _ -> }): Pair<Int, String?> {
+    private fun migrateBackupPackages(
+        client: WebDavClient,
+        onProgress: (Int, Int) -> Unit = { _, _ -> }
+    ): Pair<Int, String?> {
         val keys = syncKeys()
         if (!keys.hasLegacy) return 0 to null
         val encrypted = client.list().filter { WebDavPaths.isEncryptedName(it.fileName) }
