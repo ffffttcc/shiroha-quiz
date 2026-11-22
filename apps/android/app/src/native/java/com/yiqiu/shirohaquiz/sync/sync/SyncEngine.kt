@@ -244,7 +244,28 @@ class SyncEngine(
         val manifestRaw = client.getSyncObject(SyncObjects.MANIFEST)
             ?: return MigrationReport(0, 0, null, "云端没有清单，无需迁移。")
         val manifest = keys.openManifest(manifestRaw).manifest
+        return migrateObjects(
+            manifest = manifest,
+            fetch = { name -> client.getSyncObject(name) },
+            put = { name, bytes -> client.putSyncObject(name, bytes) },
+            onProgress = onProgress
+        ).also { report ->
+            // manifest 最后写，且总是用主钥匙（它自己也可能还是旧码）。
+            if (report.failedObject == null) {
+                client.putSyncObject(SyncObjects.MANIFEST, keys.encryptManifest(manifest))
+            }
+        }
+    }
 
+    /**
+     * 迁移逻辑本体（**不碰网络**，fetch/put 由调用方注入），便于纯内存单测。
+     */
+    internal fun migrateObjects(
+        manifest: SyncManifest,
+        fetch: (String) -> ByteArray?,
+        put: (String, ByteArray) -> Unit,
+        onProgress: ((done: Int, total: Int) -> Unit)? = null
+    ): MigrationReport {
         val targets = buildList {
             manifest.banks.values.sortedBy { it.contentHash }.forEach { record ->
                 add(MigrationTarget(SyncObjects.bankName(record.contentHash), SyncPayloadCipher.aadForContent(record.contentHash)))
@@ -257,11 +278,11 @@ class SyncEngine(
         var migrated = 0
         targets.forEachIndexed { index, target ->
             try {
-                val raw = client.getSyncObject(target.name)
+                val raw = fetch(target.name)
                 if (raw != null) {
                     val opened = keys.open(raw, target.aad)
                     if (opened.usedLegacy) {
-                        client.putSyncObject(target.name, keys.encrypt(opened.plaintext, target.aad))
+                        put(target.name, keys.encrypt(opened.plaintext, target.aad))
                         migrated++
                     }
                 }
@@ -277,8 +298,6 @@ class SyncEngine(
             onProgress?.invoke(index + 1, targets.size)
         }
 
-        // manifest 最后写，且总是用主钥匙（它自己也可能还是旧码）。
-        client.putSyncObject(SyncObjects.MANIFEST, keys.encryptManifest(manifest))
         return MigrationReport(targets.size, migrated, null, "迁移完成 $migrated 个（共 ${targets.size} 个对象）")
     }
 
