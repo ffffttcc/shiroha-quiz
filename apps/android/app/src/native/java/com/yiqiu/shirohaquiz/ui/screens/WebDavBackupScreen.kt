@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
@@ -24,8 +25,8 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalClipboardManager
-import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
@@ -63,10 +64,13 @@ fun WebDavBackupScreen(onBack: () -> Unit) {
     val prepared by manager.preparedRestore.collectAsState()
     val downloaded by manager.downloadedFile.collectAsState()
     val scope = rememberCoroutineScope()
-    var endpoint by rememberSaveable { mutableStateOf(settings.baseUrl) }
+
+    var endpoint by rememberSaveable { mutableStateOf(settings.baseUrl.ifBlank { CloudSyncUiModel.DEFAULT_BASE_URL }) }
     var username by rememberSaveable { mutableStateOf(settings.username) }
-    var directory by rememberSaveable { mutableStateOf(settings.remoteDirectory) }
-    var rememberPassword by rememberSaveable { mutableStateOf(settings.rememberPassword) }
+    var directory by rememberSaveable {
+        mutableStateOf(settings.remoteDirectory.ifBlank { CloudSyncUiModel.DEFAULT_DIRECTORY })
+    }
+    var rememberPassword by rememberSaveable { mutableStateOf(true) }
     var password by remember { mutableStateOf("") }
     var message by remember { mutableStateOf<String?>(null) }
     var deleteEntry by remember { mutableStateOf<WebDavBackupEntry?>(null) }
@@ -74,7 +78,6 @@ fun WebDavBackupScreen(onBack: () -> Unit) {
     var confirmOverwrite by remember { mutableStateOf(false) }
     var saveFileName by remember { mutableStateOf("shiroha_cloud_backup.zip") }
     val syncStore = remember { SyncStateStore(context) }
-    val settingsStore = remember { WebDavSettingsStore(context) }
     var syncEnabled by remember { mutableStateOf(syncStore.isEnabled()) }
     var syncInterval by remember { mutableStateOf(syncStore.intervalMinutes()) }
     var syncWifiOnly by remember { mutableStateOf(syncStore.wifiOnly()) }
@@ -82,10 +85,24 @@ fun WebDavBackupScreen(onBack: () -> Unit) {
     var lastSyncResult by remember { mutableStateOf(syncStore.lastSyncResult()) }
     var lastError by remember { mutableStateOf(syncStore.lastError()) }
     var lastErrorAt by remember { mutableStateOf(syncStore.lastErrorAt()) }
-    // 冲突副本被引擎落成普通本地题库（名字带「（冲突副本 …）」），读题库列表就能列名字，不需要引擎暴露。
     val localConflictCopies = QuizRepository.banks.map { it.name }.filter { it.contains(CONFLICT_COPY_MARK) }
     var encryptionEnabled by remember { mutableStateOf(manager.isEncryptionEnabled()) }
     var recoveryCode by remember { mutableStateOf<String?>(null) }
+
+    // —— 账号式界面的壳（新增）——
+    var signedIn by rememberSaveable {
+        mutableStateOf(
+            settings.baseUrl.isNotBlank() && settings.username.isNotBlank() && manager.hasPassword()
+        )
+    }
+    var advancedOpen by rememberSaveable { mutableStateOf(false) }
+    var changePasswordOpen by remember { mutableStateOf(false) }
+    var oldPasswordInput by remember { mutableStateOf("") }
+    var newPasswordInput by remember { mutableStateOf("") }
+    var customMinutesInput by rememberSaveable { mutableStateOf("") }
+    var syncAppSettings by remember { mutableStateOf(AppSettingsSyncPrefs.isEnabled(context)) }
+    var confirmLogout by remember { mutableStateOf(false) }
+
     val clipboard = LocalClipboardManager.current
     val busy = task?.stage == WebDavTaskStage.RUNNING || task?.stage == WebDavTaskStage.CANCELLING
     val saveDownload = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/octet-stream")) { uri ->
@@ -105,283 +122,389 @@ fun WebDavBackupScreen(onBack: () -> Unit) {
         if (downloaded != null) saveDownload.launch(saveFileName)
     }
     LaunchedEffect(prepared?.token) { restoreMode = WebDavRestoreMode.IMPORT_COPY; confirmOverwrite = false }
-    fun run(action: () -> Boolean) {
-        try { if (!action()) message = "当前任务尚未结束，请稍后再试。" }
-        catch (error: Exception) { message = error.message ?: "操作失败，请检查配置。" }
+    LaunchedEffect(signedIn) { if (signedIn) manager.refreshBackups() }
+
+    fun refreshSyncState() {
+        lastSyncAt = syncStore.lastSyncAt()
+        lastSyncResult = syncStore.lastSyncResult()
+        lastError = syncStore.lastError()
+        lastErrorAt = syncStore.lastErrorAt()
     }
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(ShirohaSpacing.Xl),
-        verticalArrangement = Arrangement.spacedBy(ShirohaSpacing.Lg)) {
-        ShirohaHeader(kicker = "Cloud", title = "云端备份", subtitle = "通过自己的 WebDAV 保存与恢复完整备份。")
-        GlassCard {
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text("连接配置", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
-                OutlinedTextField(endpoint, { endpoint = it }, label = { Text("HTTPS 服务地址") }, enabled = !busy,
-                    singleLine = true, modifier = Modifier.fillMaxWidth())
-                OutlinedTextField(username, { username = it }, label = { Text("用户名") }, enabled = !busy,
-                    singleLine = true, modifier = Modifier.fillMaxWidth())
-                OutlinedTextField(password, { password = it }, label = { Text(if (manager.hasPassword()) "应用密码（留空保留已保存密码）" else "应用密码") },
-                    enabled = !busy, singleLine = true, visualTransformation = PasswordVisualTransformation(), modifier = Modifier.fillMaxWidth())
-                OutlinedTextField(directory, { directory = it }, label = { Text("远程目录") }, enabled = !busy,
-                    singleLine = true, modifier = Modifier.fillMaxWidth())
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Checkbox(rememberPassword, { rememberPassword = it }, enabled = !busy)
-                    Text("加密保存应用密码到本机", style = MaterialTheme.typography.bodyMedium)
-                }
+
+    fun run(action: () -> Boolean) {
+        try { if (!action()) message = "有任务正在运行，稍后再试。" }
+        catch (error: Exception) { message = CloudSyncUiModel.friendlyFailure(error.message) }
+    }
+
+    fun signIn() {
+        if (username.isBlank() || password.isBlank()) {
+            message = "填写用户名和密码就能登录。"
+            return
+        }
+        val target = endpoint.ifBlank { CloudSyncUiModel.DEFAULT_BASE_URL }
+        val dir = directory.ifBlank { CloudSyncUiModel.DEFAULT_DIRECTORY }
+        scope.launch {
+            message = "正在登录…"
+            if (!manager.saveSettings(WebDavSettings(target, username.trim(), dir, true), password)) {
+                message = "有任务正在运行，稍后再试。"
+                return@launch
+            }
+            endpoint = target
+            directory = dir
+            rememberPassword = true
+            val report = manager.syncNow()
+            refreshSyncState()
+            if (!report.ok) {
+                message = CloudSyncUiModel.signInError(report.message)
+                return@launch
+            }
+            password = ""
+            signedIn = true
+            message = "登录成功，正在读取云端备份。"
+            manager.refreshBackups()
+        }
+    }
+
+    fun changePassword() {
+        if (oldPasswordInput.isBlank() || newPasswordInput.isBlank()) {
+            message = "当前密码和新密码都要填。"
+            return
+        }
+        if (newPasswordInput.length < 8) {
+            message = "新密码至少 8 位。"
+            return
+        }
+        scope.launch {
+            message = "正在把新密码告诉服务器…"
+            val admin = WebDavAdminClient(endpoint)
+            val added = admin.rotate(WebDavRotation.MODE_ADD, username, oldPasswordInput, newPasswordInput)
+            if (!added.ok) {
+                message = "没改成。现在这套密码还能继续用，稍后再试。"
+                return@launch
+            }
+            if (!manager.saveSettings(WebDavSettings(endpoint, username, directory, rememberPassword), newPasswordInput)) {
+                message = "有任务正在运行。新密码已在服务器生效，当前密码仍然可用，稍后重试即可。"
+                return@launch
+            }
+            message = "正在用新密码重新加密云端数据…"
+            val report = manager.syncNow()
+            refreshSyncState()
+            if (!WebDavRotation.canFinalize(added.ok, report.ok)) {
+                message = "新密码已生效，但云端数据还没重加密完。旧密码仍然可用，稍后再点一次。"
+                return@launch
+            }
+            message = "正在完成切换…"
+            val finalized = admin.rotate(WebDavRotation.MODE_FINALIZE, username, oldPasswordInput, newPasswordInput)
+            if (finalized.ok) {
+                oldPasswordInput = ""
+                newPasswordInput = ""
+                changePasswordOpen = false
+                message = "密码已更新。"
+            } else {
+                message = "数据已重加密，但旧密码还没摘掉。现在新旧密码都能用。"
+            }
+        }
+    }
+
+    fun applyInterval(minutes: Int) {
+        syncInterval = minutes
+        syncStore.setIntervalMinutes(minutes)
+        SyncScheduler.schedule(context, syncStore)
+    }
+
+    Column(
+        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(ShirohaSpacing.Xl),
+        verticalArrangement = Arrangement.spacedBy(ShirohaSpacing.Lg)
+    ) {
+        ShirohaHeader(
+            kicker = "Cloud",
+            title = "云端备份",
+            subtitle = if (signedIn) "已登录：${username}" else "用一个账号，在任何设备上接着刷。"
+        )
+        message?.let { NoticeCard(it, warning = it.contains("失败") || it.contains("没")) }
+
+        if (!signedIn) {
+            SignInCard(
+                username = username,
+                onUsernameChange = { username = it },
+                password = password,
+                onPasswordChange = { password = it },
+                enabled = !busy,
+                onSignIn = ::signIn
+            )
+            AdvancedCard(
+                open = advancedOpen,
+                onToggle = { advancedOpen = !advancedOpen },
+                summary = "服务器地址、目录等"
+            ) {
+                ConnectionFields(
+                    endpoint = endpoint, onEndpointChange = { endpoint = it },
+                    directory = directory, onDirectoryChange = { directory = it },
+                    rememberPassword = rememberPassword, onRememberPasswordChange = { rememberPassword = it },
+                    enabled = !busy
+                )
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    TextButton(enabled = !busy, onClick = {
-                        val enteredPassword = password.ifEmpty { settingsStore.loadPassword().orEmpty() }
-                        val previous = runCatching { settingsStore.credentials() }.getOrNull()
-                        val credentialsChanged = previous != null && enteredPassword.isNotEmpty() &&
-                            WebDavRotation.needed(previous.username, previous.password, username, enteredPassword)
-                        scope.launch {
-                            message = "正在保存配置…"
-                            val saved = manager.saveSettings(
-                                WebDavSettings(endpoint, username, directory, rememberPassword),
-                                password.takeIf { it.isNotEmpty() }
-                            )
-                            if (!saved) {
-                                message = "当前任务尚未结束，请稍后再试。"
-                                return@launch
-                            }
-                            password = ""
-                            if (!rememberPassword || !manager.hasPassword()) {
-                                val automatic = WebDavAutoBackup.load(context)
-                                if (automatic.intervalDays > 0) WebDavAutoBackup.save(context, automatic.copy(intervalDays = 0))
-                            }
-                            if (!credentialsChanged) {
-                                message = "配置已保存。"
-                                return@launch
-                            }
-                            // 改密码=换钥匙：先加新口令 → 用新凭据把云端对象重加密 → 最后才摘旧口令。
-                            // 任何一步失败都不摘旧口令，用户不会被锁在外面。
-                            message = "配置已保存，正在同步新密码到服务器…"
-                            val admin = WebDavAdminClient(endpoint)
-                            val added = admin.rotate(
-                                WebDavRotation.MODE_ADD, username, previous!!.password, enteredPassword
-                            )
-                            if (!added.ok) {
-                                message = "配置已保存，但服务器没接受新密码：${added.detail}。旧密码仍然有效，请重试或手动处理。"
-                                return@launch
-                            }
-                            message = "新密码已加入服务器，正在重新加密云端数据…"
-                            val report = manager.syncNow()
-                            if (!WebDavRotation.canFinalize(added.ok, report.ok)) {
-                                message = "新密码已生效，但云端重加密没有完成：${report.message}。旧密码仍然有效，请重试。"
-                                return@launch
-                            }
-                            message = "重加密完成，正在完成切换…"
-                            val finalized = admin.rotate(
-                                WebDavRotation.MODE_FINALIZE, username, previous.password, enteredPassword
-                            )
-                            message = if (finalized.ok) {
-                                "密码已更新，云端数据已用新密钥重新加密。"
-                            } else {
-                                "重加密已完成，但旧密码没能摘除：${finalized.detail}。当前新旧密码都可用。"
-                            }
-                        }
-                    }) { Text("保存配置") }
                     TextButton(enabled = !busy, onClick = { run(manager::testConnection) }) { Text("测试连接") }
                     TextButton(enabled = !busy, onClick = { run(manager::createDirectoryByUserRequest) }) { Text("创建备份目录") }
                 }
-                TextButton(enabled = !busy, onClick = { run {
-                    val cleared = manager.clearSettings()
-                    if (cleared) {
-                        endpoint = ""; username = ""; directory = WebDavSettings.DEFAULT_REMOTE_DIRECTORY
-                        password = ""; rememberPassword = false
-                        WebDavAutoBackup.save(context, WebDavAutoBackupSettings())
-                        message = "配置已清除，自动备份已关闭。"
-                    }
-                    cleared
-                } }) { Text("清除云端配置") }
-                Text("建议使用服务商应用专用密码。请先保存配置；未勾选保存密码时，仅本次应用运行可用。",
-                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-        }
-        message?.let { NoticeCard(it, warning = it.contains("失败")) }
-        task?.let { current ->
-            GlassCard {
-                Text(webDavActionLabel(current.kind), style = MaterialTheme.typography.titleLarge)
-                if (busy) LinearProgressIndicator(progress = {
-                    if ((current.totalBytes ?: 0) > 0) (current.transferredBytes.toFloat() / current.totalBytes!!).coerceIn(0f, 1f) else 0f
-                }, modifier = Modifier.fillMaxWidth())
-                Text(current.message.ifBlank { "正在处理，请稍候……" }, style = MaterialTheme.typography.bodyMedium)
-                if (busy) TextButton(onClick = { manager.cancelCurrentTask() }) { Text("取消当前任务") }
-                else TextButton(onClick = { manager.dismissFinishedTask() }) { Text("收起任务提示") }
-            }
-        }
-        GlassCard {
-            Text("完整备份", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
-            Text("包含已保存的题库、图片、错题、收藏和学习记录。OCR 草稿与服务密钥不上传。",
-                style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                TextButton(enabled = !busy, onClick = { run(manager::uploadBackup) }) { Text("上传当前备份") }
-                TextButton(enabled = !busy, onClick = { run(manager::refreshBackups) }) { Text("刷新云端列表") }
-            }
-        }
-        GlassCard {
-            Text("备份加密", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
-            Text("开启后，备份包在本机加密再上传，服务端只存密文；旧的不加密备份仍可正常下载和恢复。",
-                style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Checkbox(encryptionEnabled, { checked ->
-                    if (manager.setEncryptionEnabled(checked)) {
-                        encryptionEnabled = checked
-                        message = if (checked) "之后上传的备份会先加密再传。" else "之后上传的备份将不再加密。"
-                    } else {
-                        message = "当前任务尚未结束，请稍后再试。"
-                    }
-                }, enabled = !busy)
-                Text("备份加密（服务端只存密文）", style = MaterialTheme.typography.bodyMedium)
-            }
-            TextButton(enabled = !busy, onClick = {
-                scope.launch {
-                    recoveryCode = try {
-                        manager.recoveryCode()
-                    } catch (error: Exception) {
-                        message = "读取恢复码失败：${error.message}"
-                        null
-                    }
+                if (!lastError.isNullOrBlank()) {
+                    Text("技术细节：${truncateForDisplay(lastError)}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
-            }) { Text((if (manager.hasRecoveryCode()) "查看恢复码" else "生成恢复码") + "（旧版兼容，新版不需要）") }
-            Text("新版密钥由「账号 + 密码」派生：新设备只要填同一组地址/账号/密码即可解密，不需要搬运恢复码。" +
-                "恢复码仅用于打开旧版加密的数据；改密码等于换钥匙，请先在本机完成重加密再改服务器密码。",
-                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
-        GlassCard {
-            Text("自动同步", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
-            Text("后台按设定间隔增量同步题库：只传内容变过的库，失败不会改动本地数据。",
-                style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Checkbox(syncEnabled, { checked ->
-                    syncEnabled = checked
-                    syncStore.setEnabled(checked)
-                    SyncScheduler.schedule(context, syncStore)
-                    message = if (checked) "已开启自动同步。" else "已关闭自动同步。"
-                }, enabled = !busy)
-                Text("开启自动同步", style = MaterialTheme.typography.bodyMedium)
-            }
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Checkbox(syncWifiOnly, { checked ->
-                    syncWifiOnly = checked
-                    syncStore.setWifiOnly(checked)
-                    SyncScheduler.schedule(context, syncStore)
-                }, enabled = !busy && syncEnabled)
-                Text("仅在 Wi-Fi 下同步", style = MaterialTheme.typography.bodyMedium)
-            }
-            Text("同步频率", style = MaterialTheme.typography.bodyMedium)
-            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                listOf(15 to "15 分钟", 30 to "30 分钟", 60 to "60 分钟", 0 to "仅手动").forEach { (minutes, label) ->
-                    TextButton(enabled = !busy && syncEnabled, onClick = {
-                        syncInterval = minutes
-                        syncStore.setIntervalMinutes(minutes)
-                        SyncScheduler.schedule(context, syncStore)
-                    }) { Text(if (minutes == syncInterval) "· $label" else label) }
-                }
-            }
-            val syncStamp = if (lastSyncAt > 0) {
-                SimpleDateFormat("MM-dd HH:mm", Locale.CHINA).format(Date(lastSyncAt))
-            } else {
-                "从未同步"
-            }
-            Text("上次同步 $syncStamp · ${lastSyncResult ?: "无记录"}",
-                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            // 失败原因原样露出（截断但不改写）。失败晚于上次成功才算「当前失败」，否则标为历史失败，避免红字压着成功记录误导。
-            val errorText = lastError
-            if (!errorText.isNullOrBlank()) {
-                val errorStamp = if (lastErrorAt > 0) {
-                    SimpleDateFormat("MM-dd HH:mm", Locale.CHINA).format(Date(lastErrorAt))
-                } else {
-                    "时间未知"
-                }
-                val errorIsCurrent = lastErrorAt > lastSyncAt
-                Text(
-                    if (errorIsCurrent) "上次失败：${truncateForDisplay(errorText)} · $errorStamp"
-                    else "历史失败（此后已同步成功）：${truncateForDisplay(errorText)} · $errorStamp",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = if (errorIsCurrent) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant
+                LegacyRecoveryCodeSection(
+                    enabled = !busy,
+                    onReveal = {
+                        scope.launch {
+                            recoveryCode = try { manager.recoveryCode() } catch (error: Exception) {
+                                message = "暂时读不出来，稍后再试。"
+                                null
+                            }
+                        }
+                    },
+                    hasRecoveryCode = manager.hasRecoveryCode()
                 )
             }
-            if (localConflictCopies.isNotEmpty()) {
-                Text("冲突副本（已保留为本地题库）：${localConflictCopies.joinToString("、")}",
+        } else {
+            task?.let { current ->
+                GlassCard {
+                    Text(webDavActionLabel(current.kind), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
+                    if (busy) LinearProgressIndicator(progress = {
+                        if ((current.totalBytes ?: 0) > 0) (current.transferredBytes.toFloat() / current.totalBytes!!).coerceIn(0f, 1f) else 0f
+                    }, modifier = Modifier.fillMaxWidth())
+                    Text(current.message.ifBlank { "正在处理，请稍候……" }, style = MaterialTheme.typography.bodyMedium)
+                    if (busy) TextButton(onClick = { manager.cancelCurrentTask() }) { Text("取消当前任务") }
+                    else TextButton(onClick = { manager.dismissFinishedTask() }) { Text("收起任务提示") }
+                }
+            }
+
+            CloudLatestBackupCard(
+                entries = entries,
+                busy = busy,
+                onRefresh = { run(manager::refreshBackups) },
+                onRestore = { entry -> run { manager.prepareRestore(entry) } }
+            )
+
+            GlassCard {
+                Text("自动同步", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
+                Text("开着就自动把改动传到云端，换设备、重装都不丢。",
+                    style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Checkbox(syncEnabled, { checked ->
+                        syncEnabled = checked
+                        syncStore.setEnabled(checked)
+                        SyncScheduler.schedule(context, syncStore)
+                        message = if (checked) "已开启自动同步。" else "已关闭自动同步。"
+                    }, enabled = !busy)
+                    Text("开启自动同步", style = MaterialTheme.typography.bodyMedium)
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    listOf(15, 30, 60).forEach { minutes ->
+                        TextButton(enabled = !busy && syncEnabled, onClick = { applyInterval(minutes) }) {
+                            Text(if (minutes == syncInterval) "· ${CloudSyncUiModel.intervalLabel(minutes)}" else CloudSyncUiModel.intervalLabel(minutes))
+                        }
+                    }
+                    TextButton(enabled = !busy && syncEnabled, onClick = { customMinutesInput = "" }) {
+                        Text(if (syncInterval !in listOf(15, 30, 60)) "· 自定义" else "自定义")
+                    }
+                }
+                if (syncInterval !in listOf(15, 30, 60)) {
+                    Text("当前：${CloudSyncUiModel.intervalLabel(syncInterval)}",
+                        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(
+                        value = customMinutesInput,
+                        onValueChange = { customMinutesInput = it },
+                        label = { Text("自定义间隔（分钟）") },
+                        enabled = !busy && syncEnabled,
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(0.6f)
+                    )
+                    TextButton(enabled = !busy && syncEnabled && CloudSyncUiModel.parseCustomMinutes(customMinutesInput) != null,
+                        onClick = {
+                            CloudSyncUiModel.parseCustomMinutes(customMinutesInput)?.let {
+                                applyInterval(it)
+                                customMinutesInput = ""
+                                message = "同步间隔已设为 ${CloudSyncUiModel.intervalLabel(it)}。"
+                            }
+                        }) { Text("应用") }
+                }
+                TextButton(enabled = !busy, onClick = {
+                    scope.launch {
+                        message = "正在同步…"
+                        val report = manager.syncNow()
+                        refreshSyncState()
+                        message = if (report.ok) {
+                            "同步好了：上传 ${report.uploaded} / 下载 ${report.downloaded}。"
+                        } else {
+                            CloudSyncUiModel.friendlyFailure(report.message)
+                        }
+                        if (report.ok) manager.refreshBackups()
+                    }
+                }) { Text("立即同步") }
+                SyncStatusLines(
+                    lastSyncAt = lastSyncAt,
+                    lastSyncResult = lastSyncResult,
+                    lastError = lastError,
+                    lastErrorAt = lastErrorAt,
+                    backupCount = entries.size,
+                    conflictCopies = localConflictCopies,
+                    deviceTag = syncStore.deviceId().take(8)
+                )
+            }
+
+            GlassCard {
+                Text("更改密码", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
+                Text("改完不用重新登录，云端数据会自动用新密码重新加密。",
+                    style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                if (!changePasswordOpen) {
+                    TextButton(enabled = !busy, onClick = { changePasswordOpen = true }) { Text("更改密码") }
+                } else {
+                    OutlinedTextField(oldPasswordInput, { oldPasswordInput = it }, label = { Text("当前密码") },
+                        enabled = !busy, singleLine = true, visualTransformation = PasswordVisualTransformation(),
+                        modifier = Modifier.fillMaxWidth())
+                    OutlinedTextField(newPasswordInput, { newPasswordInput = it }, label = { Text("新密码（至少 8 位）") },
+                        enabled = !busy, singleLine = true, visualTransformation = PasswordVisualTransformation(),
+                        modifier = Modifier.fillMaxWidth())
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        TextButton(enabled = !busy, onClick = ::changePassword) { Text("确认更改") }
+                        TextButton(enabled = !busy, onClick = {
+                            changePasswordOpen = false; oldPasswordInput = ""; newPasswordInput = ""
+                        }) { Text("取消") }
+                    }
+                }
+            }
+
+            GlassCard {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Checkbox(syncAppSettings, { checked ->
+                        syncAppSettings = checked
+                        AppSettingsSyncPrefs.setEnabled(context, checked)
+                        message = if (checked) "之后会把应用设置一起同步。" else "不再同步应用设置。"
+                    }, enabled = !busy)
+                    Text("同步应用设置", style = MaterialTheme.typography.bodyLarge)
+                }
+                Text("把外观、刷题偏好这类设置也同步到其他设备。密钥和账号信息不会上传。",
                     style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
-            TextButton(enabled = !busy, onClick = {
-                scope.launch {
-                    message = "正在同步…"
-                    val report = manager.syncNow()
-                    lastSyncAt = syncStore.lastSyncAt()
-                    lastSyncResult = syncStore.lastSyncResult()
-                    lastError = syncStore.lastError()
-                    lastErrorAt = syncStore.lastErrorAt()
-                    message = if (report.ok) {
-                        val copies = QuizRepository.banks.map { it.name }.filter { it.contains(CONFLICT_COPY_MARK) }
-                        val conflictNote = when {
-                            report.conflicts <= 0 -> ""
-                            copies.isEmpty() -> "冲突副本已保留，但本地题库里没找到副本名（需要引擎侧暴露）。"
-                            else -> "冲突副本：${copies.joinToString("、")}"
+
+            AdvancedCard(
+                open = advancedOpen,
+                onToggle = { advancedOpen = !advancedOpen },
+                summary = "地址、目录、完整备份列表、备份加密"
+            ) {
+                ConnectionFields(
+                    endpoint = endpoint, onEndpointChange = { endpoint = it },
+                    directory = directory, onDirectoryChange = { directory = it },
+                    rememberPassword = rememberPassword, onRememberPasswordChange = { rememberPassword = it },
+                    enabled = !busy
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    TextButton(enabled = !busy, onClick = { run(manager::testConnection) }) { Text("测试连接") }
+                    TextButton(enabled = !busy, onClick = { run(manager::createDirectoryByUserRequest) }) { Text("创建备份目录") }
+                    TextButton(enabled = !busy, onClick = { run(manager::uploadBackup) }) { Text("上传当前备份") }
+                }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Checkbox(encryptionEnabled, { checked ->
+                        if (manager.setEncryptionEnabled(checked)) {
+                            encryptionEnabled = checked
+                            message = if (checked) "之后上传的备份会先加密再传。" else "之后上传的备份将不再加密。"
+                        } else {
+                            message = "有任务正在运行，稍后再试。"
                         }
-                        "同步完成：上传 ${report.uploaded} / 下载 ${report.downloaded} / 冲突 ${report.conflicts}。$conflictNote"
-                    } else {
-                        "同步失败：${report.message}"
+                    }, enabled = !busy)
+                    Text("备份加密（服务端只存密文）", style = MaterialTheme.typography.bodyMedium)
+                }
+                Text("完整备份 · ${entries.size} 份", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                Text("这里只统计 Backups/ 下的完整备份包。增量同步对象（shiroha-sync- 前缀）与它们同目录，但不在本列表计数。",
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                entries.forEach { entry ->
+                    Column(Modifier.padding(vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text(CloudSyncUiModel.backupTitle(entry), style = MaterialTheme.typography.titleSmall)
+                        Text(CloudSyncUiModel.backupSummary(entry),
+                            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Row {
+                            TextButton(enabled = !busy && entry.integrityAvailable,
+                                onClick = { saveFileName = entry.fileName; run { manager.downloadBackup(entry) } }) { Text("下载到本地") }
+                            TextButton(enabled = !busy, onClick = { deleteEntry = entry }) { Text("删除") }
+                        }
                     }
                 }
-            }) { Text("立即同步") }
-        }
-        GlassCard {
-            Text("完整备份 · ${entries.size} 份", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
-            Text("这里只统计 Backups/ 下的完整备份包。增量同步对象（shiroha-sync- 前缀：manifest / bank / record 分片）与它们同目录，但不在本列表计数——显示 0 份不代表同步没生效。",
-                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            if (entries.isEmpty()) Text("点击刷新读取远程备份。首次使用时，请先测试连接并创建备份目录。")
-            entries.forEach { entry ->
-                Column(Modifier.padding(vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Text(entry.createdAt?.let { SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.CHINA).format(Date(it)) } ?: "时间未知",
-                        style = MaterialTheme.typography.titleMedium)
-                    val sourceLabel = when (entry.source) { "android" -> "Android 原生"; "web" -> "Web"; else -> "来源未知" }
-                    Text("${"%.1f".format(entry.sizeBytes / 1048576.0)} MB · $sourceLabel · ${entry.appVersion}",
-                        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Text(entry.fileName, style = MaterialTheme.typography.bodySmall)
-                    if (!entry.integrityAvailable) Text("旧备份缺少完整校验信息，无法安全恢复。", color = MaterialTheme.colorScheme.error)
-                    Row {
-                        TextButton(enabled = !busy && entry.integrityAvailable, onClick = { run { manager.prepareRestore(entry) } }) { Text("恢复") }
-                        TextButton(enabled = !busy && entry.integrityAvailable, onClick = { saveFileName = entry.fileName; run { manager.downloadBackup(entry) } }) { Text("下载到本地") }
-                        TextButton(enabled = !busy, onClick = { deleteEntry = entry }) { Text("删除") }
-                    }
-                }
+                LegacyRecoveryCodeSection(
+                    enabled = !busy,
+                    onReveal = {
+                        scope.launch {
+                            recoveryCode = try { manager.recoveryCode() } catch (error: Exception) {
+                                message = "暂时读不出来，稍后再试。"
+                                null
+                            }
+                        }
+                    },
+                    hasRecoveryCode = manager.hasRecoveryCode()
+                )
+                key(settings) { WebDavAutoBackupCard(enabled = !busy) }
             }
+
+            TextButton(enabled = !busy, onClick = { confirmLogout = true }) { Text("退出登录") }
         }
-        key(settings) { WebDavAutoBackupCard(enabled = !busy) }
+
         TextButton(onClick = onBack) { Text("返回数据管理") }
     }
+
+    if (confirmLogout) {
+        AlertDialog(
+            onDismissRequest = { confirmLogout = false },
+            title = { Text("退出登录？") },
+            text = { Text("退出后本机不再保存这个账号的密码，云端数据不会被删除。") },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirmLogout = false
+                    if (manager.clearSettings()) {
+                        signedIn = false
+                        password = ""
+                        username = ""
+                        endpoint = CloudSyncUiModel.DEFAULT_BASE_URL
+                        directory = CloudSyncUiModel.DEFAULT_DIRECTORY
+                        message = "已退出登录。"
+                    } else {
+                        message = "有任务正在运行，稍后再退出。"
+                    }
+                }) { Text("退出") }
+            },
+            dismissButton = { TextButton(onClick = { confirmLogout = false }) { Text("取消") } }
+        )
+    }
+
     recoveryCode?.let { code ->
         AlertDialog(
             onDismissRequest = { recoveryCode = null },
-            title = { Text("备份恢复码") },
+            title = { Text("旧版备份密码") },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("请立刻抄写或复制保存，不要只存在本机。")
+                    Text("只有打开很早以前的云端备份时才用得到。请不要只存在本机。")
                     Text(BackupEncryption.formatRecoveryCode(code),
                         style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-                    Text("恢复码只保存在本机的安全存储里，不会上传、也不会写进备份。一旦丢失，" +
-                        "服务端上的加密备份将永久无法解密，我们也无法帮你找回。",
-                        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+                    Text("它只保存在本机的安全存储里，不会上传、也不会写进备份。",
+                        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             },
             confirmButton = {
                 TextButton(onClick = {
                     clipboard.setText(AnnotatedString(BackupEncryption.formatRecoveryCode(code)))
-                    message = "恢复码已复制到剪贴板。"
+                    message = "已复制到剪贴板。"
                     recoveryCode = null
-                }) { Text("复制恢复码") }
+                }) { Text("复制") }
             },
             dismissButton = { TextButton(onClick = { recoveryCode = null }) { Text("关闭") } }
         )
     }
     prepared?.let { value ->
-        if (!confirmOverwrite) AlertDialog(onDismissRequest = { manager.discardPreparedRestore() }, title = { Text("确认恢复方式") },
+        if (!confirmOverwrite) AlertDialog(onDismissRequest = { manager.discardPreparedRestore() }, title = { Text("怎么恢复这份备份？") },
             text = { Column {
                 val preview = value.preview
                 Text("${preview.bankCount} 个题库、${preview.questionCount} 道题、${preview.wrongCount} 条错题、${preview.favoriteCount} 条收藏、${preview.recordCount} 条记录。")
-                listOf(WebDavRestoreMode.IMPORT_COPY to "导入为副本：保留当前数据", WebDavRestoreMode.REPLACE_CONTENT_KEEP_SETTINGS to "覆盖恢复：替换题库内容，保留本机设置").forEach { (mode, label) ->
+                listOf(WebDavRestoreMode.IMPORT_COPY to "合并进来：保留现在的内容", WebDavRestoreMode.REPLACE_CONTENT_KEEP_SETTINGS to "整体替换：用备份覆盖题库").forEach { (mode, label) ->
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         RadioButton(restoreMode == mode, onClick = { restoreMode = mode }, enabled = !busy)
                         Text(label, style = MaterialTheme.typography.bodyMedium)
@@ -391,26 +514,169 @@ fun WebDavBackupScreen(onBack: () -> Unit) {
                 if (restoreMode == WebDavRestoreMode.REPLACE_CONTENT_KEEP_SETTINGS) confirmOverwrite = true
                 else run { manager.restorePrepared(value.token, restoreMode, userConfirmed = true) }
             }) { Text("继续") } }, dismissButton = { TextButton(enabled = !busy, onClick = { manager.discardPreparedRestore() }) { Text("取消") } })
-        else AlertDialog(onDismissRequest = { confirmOverwrite = false }, title = { Text("覆盖当前题库内容？") },
+        else AlertDialog(onDismissRequest = { confirmOverwrite = false }, title = { Text("用备份覆盖当前题库？") },
             text = { Text("当前题库、错题、收藏、斩题和学习记录会被备份内容替换。系统会先保存本地安全备份，失败时回滚；外观与服务配置保持不变。") },
             confirmButton = { TextButton(enabled = !busy, onClick = { run { manager.restorePrepared(value.token, WebDavRestoreMode.REPLACE_CONTENT_KEEP_SETTINGS, true) } }) { Text("确认覆盖恢复") } },
-            dismissButton = { TextButton(enabled = !busy, onClick = { confirmOverwrite = false }) { Text("返回选择") } })
+            dismissButton = { TextButton(onClick = { confirmOverwrite = false }) { Text("返回选择") } })
     }
     deleteEntry?.let { entry ->
-        AlertDialog(onDismissRequest = { deleteEntry = null }, title = { Text("删除云端备份？") }, text = { Text("将删除 ${entry.fileName}，本地题库不会改变。") },
+        AlertDialog(onDismissRequest = { deleteEntry = null }, title = { Text("删除这份云端备份？") },
+            text = { Text("只删云端这一份，本地题库不会变。") },
             confirmButton = { TextButton(onClick = { deleteEntry = null; run { manager.deleteBackup(entry, true) } }) { Text("确认删除") } },
             dismissButton = { TextButton(onClick = { deleteEntry = null }) { Text("取消") } })
     }
 }
 
+@Composable
+private fun SignInCard(
+    username: String,
+    onUsernameChange: (String) -> Unit,
+    password: String,
+    onPasswordChange: (String) -> Unit,
+    enabled: Boolean,
+    onSignIn: () -> Unit
+) {
+    GlassCard {
+        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text("登录云端账号", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
+            OutlinedTextField(username, onUsernameChange, label = { Text("用户名") }, enabled = enabled,
+                singleLine = true, modifier = Modifier.fillMaxWidth())
+            OutlinedTextField(password, onPasswordChange, label = { Text("密码") }, enabled = enabled,
+                singleLine = true, visualTransformation = PasswordVisualTransformation(),
+                modifier = Modifier.fillMaxWidth())
+            Button(onClick = onSignIn, enabled = enabled, modifier = Modifier.fillMaxWidth()) { Text("登录") }
+        }
+    }
+}
+
+@Composable
+private fun ConnectionFields(
+    endpoint: String,
+    onEndpointChange: (String) -> Unit,
+    directory: String,
+    onDirectoryChange: (String) -> Unit,
+    rememberPassword: Boolean,
+    onRememberPasswordChange: (Boolean) -> Unit,
+    enabled: Boolean
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        OutlinedTextField(endpoint, onEndpointChange, label = { Text("HTTPS 服务地址") }, enabled = enabled,
+            singleLine = true, modifier = Modifier.fillMaxWidth())
+        OutlinedTextField(directory, onDirectoryChange, label = { Text("远程目录") }, enabled = enabled,
+            singleLine = true, modifier = Modifier.fillMaxWidth())
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Checkbox(rememberPassword, onRememberPasswordChange, enabled = enabled)
+            Text("在本机记住密码", style = MaterialTheme.typography.bodyMedium)
+        }
+    }
+}
+
+@Composable
+private fun LegacyRecoveryCodeSection(enabled: Boolean, onReveal: () -> Unit, hasRecoveryCode: Boolean) {
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        TextButton(enabled = enabled, onClick = onReveal) {
+            Text(if (hasRecoveryCode) "查看旧版备份密码" else "生成旧版备份密码")
+        }
+        Text("仅用于打开很早以前加密的云端备份；现在换了设备只填账号密码就能解密。",
+            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+}
+
+@Composable
+private fun CloudLatestBackupCard(
+    entries: List<WebDavBackupEntry>,
+    busy: Boolean,
+    onRefresh: () -> Unit,
+    onRestore: (WebDavBackupEntry) -> Unit
+) {
+    val latest = entries.maxByOrNull { it.createdAt ?: 0L }
+    GlassCard {
+        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("云端最新备份", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
+                TextButton(enabled = !busy, onClick = onRefresh) { Text("刷新") }
+            }
+            if (latest == null) {
+                Text("云端还没有完整备份。点「高级 → 上传当前备份」可以传一份。",
+                    style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            } else {
+                Text(CloudSyncUiModel.backupTitle(latest), style = MaterialTheme.typography.titleMedium)
+                Text(CloudSyncUiModel.backupSummary(latest),
+                    style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                if (!latest.integrityAvailable) {
+                    Text("这份备份缺少校验信息，可能无法安全恢复。", color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.bodySmall)
+                }
+                Button(enabled = !busy && latest.integrityAvailable, onClick = { onRestore(latest) },
+                    modifier = Modifier.fillMaxWidth()) { Text("恢复这份备份") }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SyncStatusLines(
+    lastSyncAt: Long,
+    lastSyncResult: String?,
+    lastError: String?,
+    lastErrorAt: Long,
+    backupCount: Int,
+    conflictCopies: List<String>,
+    deviceTag: String
+) {
+    val stamp = if (lastSyncAt > 0) SimpleDateFormat("MM-dd HH:mm", Locale.CHINA).format(Date(lastSyncAt)) else "还没同步过"
+    Text("上次同步：$stamp", style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant)
+    Text("云端备份：$backupCount 份", style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant)
+    Text("本机标识：$deviceTag", style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant)
+    val errorText = lastError
+    if (!errorText.isNullOrBlank()) {
+        val errorStamp = if (lastErrorAt > 0) SimpleDateFormat("MM-dd HH:mm", Locale.CHINA).format(Date(lastErrorAt)) else "时间未知"
+        val current = lastErrorAt > lastSyncAt
+        Text(
+            if (current) "上次失败：${CloudSyncUiModel.friendlyFailure(errorText)} · $errorStamp"
+            else "之前失败过（后来已同步成功）· $errorStamp",
+            style = MaterialTheme.typography.bodySmall,
+            color = if (current) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant
+        )
+    } else if (!lastSyncResult.isNullOrBlank()) {
+        Text("上次结果：$lastSyncResult", style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+    if (conflictCopies.isNotEmpty()) {
+        Text("有两台设备改过同一份数据，已保留副本：${conflictCopies.joinToString("、")}",
+            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+}
+
+@Composable
+private fun AdvancedCard(open: Boolean, onToggle: () -> Unit, summary: String, content: @Composable () -> Unit) {
+    GlassCard {
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("高级", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                TextButton(onClick = onToggle) { Text(if (open) "收起" else "展开") }
+            }
+            if (!open) {
+                Text(summary, style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+            } else {
+                content()
+            }
+        }
+    }
+}
+
 internal fun webDavActionLabel(kind: WebDavTaskKind): String = when (kind) {
-    WebDavTaskKind.TEST_CONNECTION -> "测试连接"
-    WebDavTaskKind.CREATE_DIRECTORY -> "创建远程目录"
-    WebDavTaskKind.LIST -> "读取云端备份"
-    WebDavTaskKind.UPLOAD -> "上传完整备份"
-    WebDavTaskKind.PREVIEW -> "下载与校验备份"
-    WebDavTaskKind.DOWNLOAD -> "下载到本地"
-    WebDavTaskKind.RESTORE -> "恢复题库内容"
-    WebDavTaskKind.DELETE -> "删除云端备份"
-    WebDavTaskKind.CLEAN_CACHE -> "清理临时缓存"
+    WebDavTaskKind.TEST_CONNECTION -> "正在连接服务器"
+    WebDavTaskKind.CREATE_DIRECTORY -> "正在创建云端目录"
+    WebDavTaskKind.LIST -> "正在读取云端备份"
+    WebDavTaskKind.UPLOAD -> "正在上传完整备份"
+    WebDavTaskKind.PREVIEW -> "正在下载并校验备份"
+    WebDavTaskKind.DOWNLOAD -> "正在下载到本地"
+    WebDavTaskKind.RESTORE -> "正在恢复题库内容"
+    WebDavTaskKind.DELETE -> "正在删除云端备份"
+    WebDavTaskKind.CLEAN_CACHE -> "正在清理临时缓存"
 }
