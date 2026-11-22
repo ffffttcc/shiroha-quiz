@@ -55,6 +55,32 @@ class SyncKeys(
         }
     }
 
+    // ---- 完整备份包（.zip.enc）：加密一律主钥匙，解密主/旧双钥匙 ----
+
+    fun encryptBackup(plaintext: ByteArray, plaintextSha256: ByteArray): ByteArray =
+        BackupEncryption.encryptWithKey(plaintext, primary, plaintextSha256)
+
+    data class OpenedBackup(val plaintext: ByteArray, val usedLegacy: Boolean)
+
+    fun openBackup(payload: ByteArray, plaintextSha256: ByteArray): OpenedBackup {
+        try {
+            return OpenedBackup(BackupEncryption.decryptWithKey(payload, primary, plaintextSha256), usedLegacy = false)
+        } catch (primaryFailure: BackupDecryptException) {
+            val legacyKey = legacy ?: throw backupMismatch(primaryFailure)
+            try {
+                return OpenedBackup(BackupEncryption.decryptWithKey(payload, legacyKey, plaintextSha256), usedLegacy = true)
+            } catch (legacyFailure: BackupDecryptException) {
+                throw backupMismatch(legacyFailure)
+            }
+        }
+    }
+
+    /** 备份解不开时给人话，绝不出现「恢复码不匹配」「InvalidTag」。 */
+    private fun backupMismatch(cause: Throwable): BackupDecryptException = BackupDecryptException(
+        "这份备份是旧版本加密的，请在原设备升级后重新上传一份，或使用原恢复码。",
+        cause
+    )
+
     /** 给用户看的话必须是人话：不要甩 InvalidTag。 */
     private fun credentialMismatch(cause: Throwable): BackupDecryptException = BackupDecryptException(
         "账号或密码与云端数据不匹配：请确认填的是当初加密这份数据时使用的 WebDAV 账号与密码。" +

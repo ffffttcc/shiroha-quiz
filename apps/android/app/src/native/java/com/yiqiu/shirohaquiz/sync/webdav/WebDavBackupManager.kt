@@ -43,6 +43,9 @@ class WebDavBackupManager private constructor(
 ) {
     private val appContext = context.applicationContext
     private val recoveryCodes = BackupRecoveryCodeStore(appContext)
+
+    /** 备份文件名里的明文 sha256：`…-sha256-<64hex>.zip.enc`（AAD 用它，规则不许改）。 */
+    private val SHA256_IN_NAME = Regex("sha256-([a-f0-9]{64})")
     private val cacheDirectory = File(appContext.noBackupFilesDir, "webdav_cache")
     private val mutableSettings = MutableStateFlow(settingsStore.load())
     private val mutableTask = MutableStateFlow<WebDavTaskState?>(null)
@@ -118,19 +121,39 @@ class WebDavBackupManager private constructor(
                 // 迁移必须与 engine.run() 一样受单写者闸门保护：手点 + 定时任务同时触发时，
                 // 两轮迁移会并发写同一批对象，rclone 直接回 423「资源已被锁定」。
                 val migration = com.yiqiu.shirohaquiz.sync.sync.SyncWriteGate.withLock {
-                    engine.migrateAllToPrimaryKey { done, total ->
+                    val objects = engine.migrateAllToPrimaryKey { done, total ->
                         store.setSyncProgress("正在迁移旧版加密对象：已迁移 $done/$total")
                     }
+                    if (objects.failedObject != null) {
+                        objects to (0 to null as String?)
+                    } else {
+                        // 同步对象迁完之后，再迁完整备份包（同一把闸门内，串行执行不嵌套）。
+                        val (backupMigrated, backupFailure) = migrateBackupPackages { done, total ->
+                            store.setSyncProgress("正在迁移旧版完整备份：已迁移 $done/$total")
+                        }
+                        objects to (backupMigrated to backupFailure)
+                    }
                 }
-                if (migration.failedObject != null) {
-                    store.recordFailure(migration.message)
+                val objects = migration.first
+                val (backupMigrated, backupFailure) = migration.second
+                if (objects.failedObject != null) {
+                    store.recordFailure(objects.message)
                     return@withContext com.yiqiu.shirohaquiz.sync.sync.SyncEngine.Report(
                         ok = false, uploaded = 0, downloaded = 0, conflicts = 0,
-                        message = migration.message
+                        message = objects.message
+                    )
+                }
+                if (backupFailure != null) {
+                    val text = "完整备份迁移中断：$backupFailure"
+                    store.recordFailure(text)
+                    return@withContext com.yiqiu.shirohaquiz.sync.sync.SyncEngine.Report(
+                        ok = false, uploaded = 0, downloaded = 0, conflicts = 0,
+                        message = text
                     )
                 }
                 store.setKeyMigrationDone(true)
-                migrationNote = "（${migration.message}）"
+                migrationNote = "（${objects.message}" +
+                    (if (backupMigrated > 0) "；完整备份迁移 $backupMigrated 份" else "") + "）"
             }
             engine.run().let { report ->
                 recordSyncFailure(store, report)
@@ -268,8 +291,8 @@ class WebDavBackupManager private constructor(
             val plaintextSha256 = WebDavPaths.digestHex(plaintextDigest)
             val payloadBytes = if (encrypt) withContext(Dispatchers.IO) {
                 work.cancellation.throwIfCancelled()
-                // 完整备份也用凭据钥匙（有密码时），让新设备能直接解开新备份。
-                BackupEncryption.encryptWithKey(bytes, backupPrimaryKey(), plaintextDigest)
+                // 完整备份一律用**主钥匙**（账号密码派生）加密：新备份天然可在任何设备解开。
+                syncKeys().encryptBackup(bytes, plaintextDigest)
             } else bytes
             val digest = withContext(Dispatchers.IO) {
                 writePrivateFile(file, payloadBytes, work.cancellation)
@@ -622,16 +645,48 @@ class WebDavBackupManager private constructor(
         }
     }
 
-    /** 完整备份的主钥匙：有已存密码用凭据派生，否则退回旧恢复码。 */
-    private fun backupPrimaryKey(): ByteArray {
-        val settings = settingsStore.load()
-        val password = settingsStore.loadPassword()
-        if (!password.isNullOrEmpty()) {
-            return com.yiqiu.shirohaquiz.security.BackupEncryption.deriveKeyFromMaterial(
-                com.yiqiu.shirohaquiz.security.BackupEncryption.credentialMaterial(settings.username, password)
-            )
+    /**
+     * 一次性迁移云端**完整备份包**（`.zip.enc`）：旧恢复码解开 → 主钥匙重加密 → 覆盖上传。
+     *
+     * 幂等：主钥匙能解的直接跳过；可中断：任一失败即返回、**不删旧文件**，下次继续。
+     * AAD 规则不变（仍用文件名里的明文 sha256），否则旧包全废。
+     * 调用方必须已持有 [com.yiqiu.shirohaquiz.sync.sync.SyncWriteGate]（避免并发写同一对象触发 423）。
+     */
+    private fun migrateBackupPackages(onProgress: (Int, Int) -> Unit = { _, _ -> }): Pair<Int, String?> {
+        val keys = syncKeys()
+        if (!keys.hasLegacy) return 0 to null
+        val encrypted = client.list().filter { WebDavPaths.isEncryptedName(it.fileName) }
+        if (encrypted.isEmpty()) return 0 to null
+        var migrated = 0
+        encrypted.forEachIndexed { index, resource ->
+            val shaHex = SHA256_IN_NAME.find(resource.fileName)?.groupValues?.get(1)
+                ?: return@forEachIndexed
+            val entry = WebDavPaths.fallbackEntry(resource)
+            val dest = newCacheFile("enc")
+            try {
+                client.download(entry, dest)
+                val raw = dest.readBytes()
+                val digest = WebDavPaths.hexToBytes(shaHex)
+                val opened = keys.openBackup(raw, digest)
+                if (opened.usedLegacy) {
+                    val reencrypted = keys.encryptBackup(opened.plaintext, digest)
+                    val out = newCacheFile("enc")
+                    try {
+                        out.writeBytes(reencrypted)
+                        client.uploadAtomic(out, entry.fileName)
+                        migrated++
+                    } finally {
+                        out.delete()
+                    }
+                }
+            } catch (error: Exception) {
+                return migrated to (error.message ?: "完整备份迁移失败：${resource.fileName}")
+            } finally {
+                dest.delete()
+                onProgress(index + 1, encrypted.size)
+            }
         }
-        return com.yiqiu.shirohaquiz.security.BackupEncryption.deriveKey(recoveryCodes.ensure())
+        return migrated to null
     }
 
     private fun clientForSavedSettings(): WebDavClient =
@@ -692,18 +747,11 @@ class WebDavBackupManager private constructor(
         if (!encrypted) return raw
         val sha = entry.sha256 ?: throw WebDavException("备份缺少校验值，无法解密。")
         val digest = WebDavPaths.hexToBytes(sha)
-        // 先凭据钥匙（新备份），失败再用旧恢复码（旧备份）——旧码只为兼容存在。
-        val primary = runCatching { backupPrimaryKey() }.getOrNull()
-        if (primary != null) {
-            runCatching { BackupEncryption.decryptWithKey(raw, primary, digest) }
-                .onSuccess { return it }
-        }
-        val code = recoveryCodes.existing()
-            ?: throw WebDavException("账号或密码与云端备份不匹配，且本机没有旧版恢复码可兜底。")
+        // 双钥匙：先主钥匙（新版备份），失败回退旧恢复码（旧版备份）。逻辑统一在 SyncKeys 里。
         return try {
-            BackupEncryption.decryptWithKey(raw, BackupEncryption.deriveKey(code), digest)
+            syncKeys().openBackup(raw, digest).plaintext
         } catch (error: BackupDecryptException) {
-            throw WebDavException("账号或密码与云端备份不匹配（这份备份可能是旧版恢复码加密的）。")
+            throw WebDavException(error.message ?: "这份备份是旧版本加密的，请在原设备升级后重新上传一份，或使用原恢复码。")
         }
     }
 
