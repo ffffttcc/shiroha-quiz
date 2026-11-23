@@ -33,6 +33,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import com.yiqiu.shirohaquiz.ui.util.chapterDisplayOrder
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -74,7 +75,7 @@ fun ChapterPracticeScreen(
     } else {
         allBanks
             .filter { it.groupName.ifBlank { DEFAULT_BANK_GROUP_NAME } == currentGroupName }
-            .sortedBy { it.name }
+            .sortedWith(chapterDisplayOrder)
     }
     val currentIndex = siblings.indexOfFirst { it.id == currentBank?.id }
     val previousBank = if (currentIndex > 0) siblings[currentIndex - 1] else null
@@ -219,7 +220,7 @@ fun ChapterPracticeScreen(
             else -> {
                 groupedBanks.forEach { entry ->
                     val groupName = entry.key
-                    val banksInGroup = entry.value
+                    val banksInGroup = entry.value.sortedWith(chapterDisplayOrder)
                     // 搜索时强制展开，否则命中的章节会被折叠藏起来。
                     val isExpanded = normalizedQuery.isNotBlank() || groupName in expandedGroups
                     val totalQuestions = banksInGroup.sumOf { QuizRepository.bankQuestionCount(it.id) }

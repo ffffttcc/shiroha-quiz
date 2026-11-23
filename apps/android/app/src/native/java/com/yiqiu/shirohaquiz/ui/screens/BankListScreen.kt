@@ -64,6 +64,7 @@ import com.yiqiu.shirohaquiz.ui.theme.ShirohaDimens
 import com.yiqiu.shirohaquiz.ui.theme.ShirohaRadius
 import com.yiqiu.shirohaquiz.ui.theme.ShirohaSpacing
 import com.yiqiu.shirohaquiz.ui.util.bankDisplayPath
+import com.yiqiu.shirohaquiz.ui.util.chapterDisplayOrder
 
 @Composable
 fun BankListScreen(
@@ -253,7 +254,7 @@ fun BankListScreen(
 
         groupedBanks.forEach { entry ->
             val groupName = entry.key
-            val banksInGroup = entry.value
+            val banksInGroup = entry.value.sortedWith(chapterDisplayOrder)
             val isExpanded = groupName in expandedGroups
             val totalQuestions = banksInGroup.sumOf { QuizRepository.bankQuestionCount(it.id) }
 
