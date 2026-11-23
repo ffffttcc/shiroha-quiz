@@ -55,6 +55,7 @@ import com.yiqiu.shirohaquiz.state.QuizRepository
 import com.yiqiu.shirohaquiz.ui.components.ActionPillButton
 import com.yiqiu.shirohaquiz.ui.components.GlassCard
 import com.yiqiu.shirohaquiz.ui.components.IllustrationHeroCard
+import com.yiqiu.shirohaquiz.ui.components.ShirohaBookSectionHeader
 import com.yiqiu.shirohaquiz.ui.components.ShirohaDangerConfirmDialog
 import com.yiqiu.shirohaquiz.ui.components.ShirohaHeader
 import com.yiqiu.shirohaquiz.ui.components.StatusChip
@@ -82,9 +83,9 @@ fun BankListScreen(
     var moveTarget by remember { mutableStateOf<QuizBank?>(null) }
     var moveGroupText by remember { mutableStateOf(DEFAULT_BANK_GROUP_NAME) }
     var deleteTarget by remember { mutableStateOf<QuizBank?>(null) }
-    // 分组一律默认收起（含当前题库所在分组）；用户手点后由 rememberSaveable 记住。
+    // 分组与书目都默认收起（含当前题库所在的分组/书）；用户手点后由 rememberSaveable 记住。
     var expandedGroups by rememberSaveable { mutableStateOf<List<String>>(emptyList()) }
-    var collapsedBooks by rememberSaveable { mutableStateOf<List<String>>(emptyList()) }
+    var expandedBooks by rememberSaveable { mutableStateOf<List<String>>(emptyList()) }
 
     if (editTarget != null) {
         AlertDialog(
@@ -317,21 +318,21 @@ fun BankListScreen(
                     val bookKey = "$groupName|${section.bookName}"
                     if (section.bookName.isNotBlank()) {
                         item(key = "bk:$bookKey") {
-                            BookSectionHeader(
+                            ShirohaBookSectionHeader(
                                 bookName = section.bookName,
                                 bankCount = section.banks.size,
-                                collapsed = bookKey in collapsedBooks,
+                                collapsed = bookKey !in expandedBooks,
                                 onToggle = {
-                                    collapsedBooks = if (bookKey in collapsedBooks) {
-                                        collapsedBooks - bookKey
+                                    expandedBooks = if (bookKey in expandedBooks) {
+                                        expandedBooks - bookKey
                                     } else {
-                                        (collapsedBooks + bookKey).distinct()
+                                        (expandedBooks + bookKey).distinct()
                                     }
                                 }
                             )
                         }
                     }
-                    if (section.bookName.isBlank() || bookKey !in collapsedBooks) {
+                    if (section.bookName.isBlank() || bookKey in expandedBooks) {
                 items(section.banks, key = { "b:${it.id}" }) { bank ->
                     BankCard(
                         bank = bank,
@@ -537,33 +538,3 @@ private fun CompactBankStateChip(
     }
 }
 
-@Composable
-private fun BookSectionHeader(
-    bookName: String,
-    bankCount: Int,
-    collapsed: Boolean,
-    onToggle: () -> Unit
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(start = 16.dp, top = 8.dp, bottom = 2.dp)
-            .shirohaNoRippleClickable(onClick = onToggle),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Icon(
-            imageVector = if (collapsed) Icons.Rounded.ChevronRight else Icons.Rounded.ExpandMore,
-            contentDescription = if (collapsed) "展开书目" else "收起书目",
-            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.size(18.dp)
-        )
-        Text(
-            text = "$bookName · $bankCount",
-            style = MaterialTheme.typography.titleSmall,
-            fontWeight = FontWeight.Medium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis
-        )
-    }
-}

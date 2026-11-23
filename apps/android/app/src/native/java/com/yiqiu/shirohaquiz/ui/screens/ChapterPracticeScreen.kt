@@ -33,6 +33,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import com.yiqiu.shirohaquiz.ui.util.bookSections
 import com.yiqiu.shirohaquiz.ui.util.chapterDisplayOrder
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -42,6 +43,7 @@ import com.yiqiu.shirohaquiz.state.QuizBank
 import com.yiqiu.shirohaquiz.state.QuizRepository
 import com.yiqiu.shirohaquiz.ui.components.ActionPillButton
 import com.yiqiu.shirohaquiz.ui.components.GlassCard
+import com.yiqiu.shirohaquiz.ui.components.ShirohaBookSectionHeader
 import com.yiqiu.shirohaquiz.ui.components.ShirohaHeader
 import com.yiqiu.shirohaquiz.ui.components.shirohaNoRippleClickable
 import com.yiqiu.shirohaquiz.ui.theme.ShirohaSpacing
@@ -60,8 +62,9 @@ fun ChapterPracticeScreen(
 ) {
     val context = LocalContext.current
     var query by rememberSaveable { mutableStateOf("") }
-    // 只记录"已展开"的分组，默认空 = 全部收起。
+    // 只记录"已展开"的分组/书目，默认空 = 全部收起。
     var expandedGroups by rememberSaveable { mutableStateOf<List<String>>(emptyList()) }
+    var expandedBooks by rememberSaveable { mutableStateOf<List<String>>(emptyList()) }
     var notice by remember { mutableStateOf<String?>(null) }
 
     val allBanks = QuizRepository.banks
@@ -112,7 +115,7 @@ fun ChapterPracticeScreen(
         ShirohaHeader(
             kicker = "Chapters",
             title = "章节练习",
-            subtitle = "点一行即设为当前并开练；分组默认收起。"
+            subtitle = "点一行即设为当前并开练；分组与书目默认收起，点开书名可看章节。"
         )
 
         Row(
@@ -263,12 +266,33 @@ fun ChapterPracticeScreen(
 
                         if (isExpanded) {
                             Spacer(Modifier.height(ShirohaSpacing.Sm))
-                            banksInGroup.forEach { bank ->
-                                ChapterRow(
-                                    bank = bank,
-                                    isCurrent = bank.id == currentBank?.id,
-                                    onClick = { startBank(bank) }
-                                )
+                            // 二级：按「书」分组；书默认收起，搜索时强制展开。
+                            bookSections(banksInGroup).forEach { section ->
+                                val bookKey = "$groupName|${section.bookName}"
+                                val bookExpanded = normalizedQuery.isNotBlank() || bookKey in expandedBooks
+                                if (section.bookName.isNotBlank()) {
+                                    ShirohaBookSectionHeader(
+                                        bookName = section.bookName,
+                                        bankCount = section.banks.size,
+                                        collapsed = !bookExpanded,
+                                        onToggle = {
+                                            expandedBooks = if (bookKey in expandedBooks) {
+                                                expandedBooks - bookKey
+                                            } else {
+                                                (expandedBooks + bookKey).distinct()
+                                            }
+                                        }
+                                    )
+                                }
+                                if (section.bookName.isBlank() || bookExpanded) {
+                                    section.banks.forEach { bank ->
+                                        ChapterRow(
+                                            bank = bank,
+                                            isCurrent = bank.id == currentBank?.id,
+                                            onClick = { startBank(bank) }
+                                        )
+                                    }
+                                }
                             }
                         }
                     }
