@@ -2559,6 +2559,7 @@ object QuizRepository {
             sourceBankId = bank?.id,
             sourceBankName = bank?.name
         )
+        upsertPracticeRecordSnapshot()
 
         // AI 临时答案只用于当前练习会话判定，不写回题库，也不据此改动错题本。
         if (temporaryReferenceAnswer == null) {
@@ -2606,6 +2607,7 @@ object QuizRepository {
                 sourceBankId = bank?.id,
                 sourceBankName = bank?.name
             )
+            upsertPracticeRecordSnapshot()
             if (temporaryAnswer == null) {
                 if (result.autoScored && result.correct) {
                     markWrongQuestionRight(bank = bank, question = question)
@@ -2694,6 +2696,7 @@ object QuizRepository {
                 sourceBankId = bank?.id,
                 sourceBankName = bank?.name
             )
+            upsertPracticeRecordSnapshot()
             if (result.autoScored && result.correct) {
                 markWrongQuestionRight(bank = bank, question = question)
             } else if (result.autoScored) {
@@ -4999,6 +5002,59 @@ object QuizRepository {
         return true
     }
 
+    /**
+     * 答题即落盘：每答一题就把本场记录更新一次。
+     * 这样无论是按返回、切 Tab、回桌面还是被系统回收，已答内容都已在 studyRecords 里。
+     * 同一场用 practiceStartedAt 作 id 基，天然幂等（重复调用只更新不新增）。
+     */
+    private fun upsertPracticeRecordSnapshot() {
+        val startedAt = practiceStartedAt ?: return
+        if (practiceQuestions.isEmpty()) return
+        val orderedResults = practiceQuestions.indices.mapNotNull { index ->
+            practiceSessionKeyAt(index)?.let { key -> practiceAnswerResults[key] }
+        }
+        val draftAnswered = practiceQuestions.indices.count { index ->
+            practiceSessionKeyAt(index)?.let { key -> practiceDraftAnswers[key]?.isNotEmpty() } == true
+        }
+        val answered = if (orderedResults.isNotEmpty()) orderedResults.size else draftAnswered
+        if (answered == 0) return
+        val now = System.currentTimeMillis()
+        val correctCount = orderedResults.count { it.autoScored && it.correct }
+        val involvedBankIds = practiceQuestionSessionKeys.mapNotNull { practiceQuestionBankIds[it] }.distinct()
+        val isGroupSession = practiceSessionScopeType == PRACTICE_SCOPE_GROUP
+        val recordBank = if (isGroupSession) null else involvedBankIds.singleOrNull()?.let { bankId -> banks.firstOrNull { it.id == bankId } }
+        val recordSource = when (practiceSourceLabel) {
+            "错题本" -> "错题练习"
+            "今日复习" -> "今日复习"
+            "收藏夹" -> "收藏练习"
+            else -> "练习"
+        }
+        val record = StudyRecord(
+            id = "practice_${startedAt}",
+            bankId = recordBank?.id,
+            bankName = if (isGroupSession) {
+                practiceSessionScopeName ?: practiceSourceLabel.ifBlank { "分组练习" }
+            } else {
+                recordBank?.name ?: practiceSessionScopeName ?: practiceSourceLabel.ifBlank { "未命名题库" }
+            },
+            source = recordSource,
+            title = if (practiceSessionScopeType == PRACTICE_SCOPE_GROUP) "${practiceSessionScopeName.orEmpty()} · 分组练习" else practiceSourceLabel.ifBlank { "练习记录" },
+            total = answered,
+            correct = correctCount,
+            timestamp = now,
+            durationSeconds = ((now - startedAt) / 1000L).toInt().coerceAtLeast(0),
+            autoSubmitted = false,
+            startedAt = startedAt,
+            questionResults = orderedResults,
+            scopeType = practiceSessionScopeType,
+            scopeName = practiceSessionScopeName
+        )
+        val existingIndex = studyRecords.indexOfFirst { it.id == record.id }
+        if (existingIndex >= 0) studyRecords[existingIndex] = record else studyRecords.add(0, record)
+        markContentDirty(KEY_STUDY_RECORDS)
+        persist()
+    }
+
     private fun finishPracticeSessionIfNeeded(advanceSequentialProgress: Boolean = false) {
         val draftAnsweredCount = practiceQuestions.indices.count { index ->
             practiceSessionKeyAt(index)?.let { practiceDraftAnswers[it]?.isNotEmpty() } == true
@@ -5020,10 +5076,11 @@ object QuizRepository {
             "收藏夹" -> "收藏练习"
             else -> "练习"
         }
+        studyRecords.removeAll { it.id == "practice_${startedAt}" }
         studyRecords.add(
             0,
             StudyRecord(
-                id = "practice_${now}",
+                id = "practice_${startedAt}",
                 bankId = recordBank?.id,
                 bankName = if (isGroupSession) {
                     practiceSessionScopeName ?: practiceSourceLabel.ifBlank { "分组练习" }
