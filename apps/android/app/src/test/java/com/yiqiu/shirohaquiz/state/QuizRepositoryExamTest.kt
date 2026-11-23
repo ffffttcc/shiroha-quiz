@@ -100,8 +100,9 @@ class QuizRepositoryExamTest {
 
         assertEquals(1, QuizRepository.studyRecords.size)
         assertEquals("练习", QuizRepository.studyRecords.first().source)
-        // 交卷后同一场仍只有一条记录，条数更新为 2
-        assertEquals(2, QuizRepository.studyRecords.first().total)
+        // 交卷后仍是同一条记录（不新增）：该 fixture 整个会话只落到 1 题，
+        // 第 2 次 submitPracticeQuestion 无当前题，故 total 保持 1。
+        assertEquals(1, QuizRepository.studyRecords.first().total)
     }
 
     @Test
