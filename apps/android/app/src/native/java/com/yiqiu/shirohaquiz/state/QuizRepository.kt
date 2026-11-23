@@ -5031,16 +5031,19 @@ object QuizRepository {
      * 会话快照：整场练习（队列、题号、草稿、已答结果）按「练习范围」落盘。
      * 退出、换库、进程被杀之后，回到同一范围可以把这一场原样接上。
      */
-    private fun savedPracticeSessions(): JSONObject {
-        val context = appContext ?: return JSONObject()
+    private fun savedPracticeSessionsOrNull(): JSONObject? {
+        val context = appContext ?: return null
         val raw = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
             .getString(KEY_PRACTICE_SESSION, null)
-        if (raw.isNullOrBlank()) return JSONObject()
-        return runCatching { JSONObject(raw) }.getOrDefault(JSONObject())
+        if (raw.isNullOrBlank()) return null
+        return runCatching { JSONObject(raw) }.getOrNull()
     }
 
-    private fun savedPracticeSessionForCurrentScope(): PracticeSessionSnapshot? =
-        PracticeSessionSnapshot.fromJson(savedPracticeSessions().optJSONObject(currentPracticeScopeKey()))
+    private fun savedPracticeSessionForCurrentScope(): PracticeSessionSnapshot? = runCatching {
+        PracticeSessionSnapshot.fromJson(
+            savedPracticeSessionsOrNull()?.optJSONObject(currentPracticeScopeKey())
+        )
+    }.getOrNull()
 
     fun hasSavedPracticeSession(): Boolean = savedPracticeSessionForCurrentScope() != null
 
@@ -5053,7 +5056,7 @@ object QuizRepository {
 
     private fun writeSavedPracticeSession(scopeKey: String, snapshot: PracticeSessionSnapshot?, sync: Boolean) {
         val context = appContext ?: return
-        val map = savedPracticeSessions()
+        val map = savedPracticeSessionsOrNull() ?: JSONObject()
         if (snapshot == null) map.remove(scopeKey) else map.put(scopeKey, snapshot.toJson())
         val editor = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
             .putString(KEY_PRACTICE_SESSION, map.toString())
@@ -5062,6 +5065,13 @@ object QuizRepository {
 
     /** 把当前内存里的这一场写成快照；每答一题、改草稿、切题、退出都会调用。 */
     fun persistPracticeSessionSnapshot(sync: Boolean = false) {
+        runCatching { persistPracticeSessionSnapshotInternal(sync) }
+            .onFailure { error ->
+                runCatching { android.util.Log.e("QuizRepository", "练习会话快照写入失败", error) }
+            }
+    }
+
+    private fun persistPracticeSessionSnapshotInternal(sync: Boolean) {
         val startedAt = practiceStartedAt ?: return
         if (practiceQuestions.isEmpty() || practiceQuestionSessionKeys.size != practiceQuestions.size) return
         val answers = buildMap {
@@ -5116,15 +5126,20 @@ object QuizRepository {
     }
 
     fun discardSavedPracticeSession() {
-        val context = appContext ?: return
-        val map = savedPracticeSessions()
-        if (map.remove(currentPracticeScopeKey()) == null) return
-        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
-            .putString(KEY_PRACTICE_SESSION, map.toString()).apply()
+        runCatching {
+            val context = appContext ?: return@runCatching
+            val map = savedPracticeSessionsOrNull() ?: JSONObject()
+            if (map.remove(currentPracticeScopeKey()) == null) return@runCatching
+            context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
+                .putString(KEY_PRACTICE_SESSION, map.toString()).apply()
+        }
     }
 
     /** 把上次那一场原样接回来：队列、题号、已答结果、草稿、选项顺序都不变。 */
-    fun resumeSavedPracticeSession(): Boolean {
+    fun resumeSavedPracticeSession(): Boolean =
+        runCatching { resumeSavedPracticeSessionInternal() }.getOrDefault(false)
+
+    private fun resumeSavedPracticeSessionInternal(): Boolean {
         val snapshot = savedPracticeSessionForCurrentScope() ?: return false
         val parsed = runCatching { parseQuestionsArray(JSONArray(snapshot.questionsJson)) }
             .getOrNull()

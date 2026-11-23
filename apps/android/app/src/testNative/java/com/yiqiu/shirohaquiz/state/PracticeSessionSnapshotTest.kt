@@ -8,11 +8,16 @@ import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
 
 /**
  * 练习会话快照：退出/换库后回来要能原样接上——队列、题号、已答结果、未提交草稿。
  * 这里钉住编解码的往返与失配时的降级（宁可作废，也不要接出一个错位的场次）。
  */
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [28])
 class PracticeSessionSnapshotTest {
 
     private fun snapshot(keys: List<String> = listOf("bank_1#q1", "bank_1#q2")) = PracticeSessionSnapshot(
