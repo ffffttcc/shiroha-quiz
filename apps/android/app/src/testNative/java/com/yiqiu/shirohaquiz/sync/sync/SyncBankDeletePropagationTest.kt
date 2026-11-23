@@ -74,7 +74,8 @@ class SyncBankDeletePropagationTest {
         assertTrue("次轮应成功：${second.message}", second.ok)
         assertEquals("本地已删的库不得被云端下回来", 0, second.downloaded)
 
-        val manifest = keys.openManifest(dav.files.getValue(SyncObjects.MANIFEST)).manifest
+        val manifestKey = dav.files.keys.first { it.endsWith(SyncObjects.MANIFEST) }
+        val manifest = keys.openManifest(dav.files.getValue(manifestKey)).manifest
         assertTrue(
             "墓碑必须写进远端清单，实际 tombstones=${manifest.bankTombstones}",
             manifest.bankTombstones.any { it.targetKey == key && it.deleted }
