@@ -417,8 +417,7 @@ private fun beginChapterPractice(
     // setActiveBank 同时写入当前题库与练习范围（BANK scope），一次到位。
     QuizRepository.setActiveBank(context, bank.id)
     // 这一章上次没做完：直接接着上次的题和题号，别重新洗牌把做过的题冲掉。
-    if (QuizRepository.practiceQuestions.isEmpty() &&
-        QuizRepository.hasSavedPracticeSession() &&
+    if (QuizRepository.hasSavedPracticeSession() &&
         QuizRepository.resumeSavedPracticeSession()
     ) {
         onStarted()

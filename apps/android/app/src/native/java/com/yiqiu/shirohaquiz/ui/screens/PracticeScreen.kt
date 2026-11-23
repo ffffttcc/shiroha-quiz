@@ -303,7 +303,14 @@ fun PracticeScreen(
         val range = if (start == end) "本次范围：第 ${start} 题" else "本次范围：第 ${start} - ${end} 题"
         if (setupReciteMode) "背题进度：第 ${sequentialProgressStartNumber} 题 · $range" else range
     }
-    val startPracticeWithSettings = {
+    val startPracticeWithSettings = setup@{
+        // 当前范围有没做完的场次就直接接上，别重新洗牌把做过的题冲掉。
+        if (QuizRepository.practiceQuestions.isEmpty() &&
+            QuizRepository.hasSavedPracticeSession() &&
+            QuizRepository.resumeSavedPracticeSession()
+        ) {
+            return@setup
+        }
         val safeTypes = selectedTypes.ifEmpty { QuizRepository.objectiveQuestionTypes() }
         val available = QuizRepository.activePracticePoolQuestions().count { it.type in safeTypes }
         if (available > 0) {
