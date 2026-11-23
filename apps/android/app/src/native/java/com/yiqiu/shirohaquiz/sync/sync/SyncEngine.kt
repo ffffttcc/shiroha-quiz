@@ -90,11 +90,14 @@ class SyncEngine(
             val baseline = state.bankMeta()
             val remoteManifest = fetchManifest() ?: SyncManifest(state.deviceId(), at, emptyMap())
             val forceUpload = state.forceUploadLocal()
+            // 本轮墓碑必须在**做计划之前**算出来。否则本轮刚删掉的库会先被 DOWNLOAD 回来，
+            // 删除意图被自己抹掉：墓碑永远写不出去，云端那份每次同步又把它复活（真机复现过）。
+            val bankTombstones = mergedBankTombstones(remoteManifest, baseline, at)
             val plan = SyncPlanner.plan(
                 localBanks = localBanks(),
                 remoteBanks = remoteManifest.banks,
                 baseline = baseline,
-                bankTombstones = remoteManifest.bankTombstones,
+                bankTombstones = bankTombstones,
                 forceUploadLocal = forceUpload
             )
 
@@ -151,7 +154,7 @@ class SyncEngine(
             }
 
             // ③ 记录类：先合 tombstone，再同步事件分片（分片对象必须在 manifest 之前落地）
-            val bankTombstones = mergedBankTombstones(remoteManifest, baseline, at)
+            // bankTombstones 已在做计划前算好，这里直接复用，避免重复计算导致 epoch 不一致。
             val recordTombstones = RecordMerge.mergeTombstones(
                 localTombstones(), remoteManifest.recordTombstones
             )
