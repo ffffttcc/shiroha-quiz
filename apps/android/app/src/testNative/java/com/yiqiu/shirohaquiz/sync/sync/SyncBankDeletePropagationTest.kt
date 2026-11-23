@@ -48,7 +48,7 @@ class SyncBankDeletePropagationTest {
         declaredQuestionCount = { 0 },
         recordStore = null,
         localBanks = { locals },
-        applyRemoteBank = { _, _, _ -> true },
+        applyRemoteBank = { _, _, _, _ -> true },
         renameLocalBank = { _, _ -> }
     )
 

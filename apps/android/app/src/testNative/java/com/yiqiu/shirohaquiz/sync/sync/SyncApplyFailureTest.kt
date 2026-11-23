@@ -40,7 +40,7 @@ class SyncApplyFailureTest {
             declaredQuestionCount = { 0 },
             recordStore = null,
             localBanks = { emptyList() },
-            applyRemoteBank = { g, n, q -> apply(g, n, q) },
+            applyRemoteBank = { g, n, q, _ -> apply(g, n, q) },
             renameLocalBank = { _, _ -> }
         )
 
