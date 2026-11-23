@@ -482,6 +482,42 @@ fun PracticeScreen(
             }
 
             if (!isPracticeRunning) {
+                // 同一标签页里退出练习后，这里要能看见「还有一场没做完」，否则一按开始就静默换了新场。
+                val snapshotVersion = QuizRepository.practiceSnapshotVersion
+                val savedSummary = remember(snapshotVersion, practiceScopeKey) {
+                    if (QuizRepository.practiceQuestions.isEmpty()) {
+                        QuizRepository.savedPracticeSessionSummary()
+                    } else {
+                        null
+                    }
+                }
+                if (savedSummary != null) {
+                    GlassCard {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(ShirohaSpacing.Sm)
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "上次练习停在第 ${savedSummary.first}/${savedSummary.second} 题",
+                                    style = MaterialTheme.typography.bodyMedium
+                                )
+                                Text(
+                                    text = if (savedSummary.third > 0) {
+                                        "已答 ${savedSummary.third} 题，点继续可接着做"
+                                    } else {
+                                        "还没作答，点继续可接着做"
+                                    },
+                                    style = MaterialTheme.typography.bodySmall
+                                )
+                            }
+                            TextButton(onClick = { QuizRepository.resumeSavedPracticeSession() }) {
+                                Text("继续")
+                            }
+                        }
+                    }
+                }
                 CompactPracticeSetupHero()
                 ChapterPracticeEntryCard(onClick = onOpenChapterPractice)
             }

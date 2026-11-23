@@ -446,6 +446,10 @@ object QuizRepository {
     /** 本次进入练习是否由「上次未完成进度」恢复而来（界面据此显示提示条）。 */
     var practiceRestoredFromSnapshot by mutableStateOf(false)
 
+    /** 快照版本号：写入/清除时自增，供界面刷新「继续上次进度」卡片。 */
+    var practiceSnapshotVersion by mutableStateOf(0)
+        private set
+
     val practiceSequentialProgress = mutableStateMapOf<String, Int>()
     private val practiceReciteSequentialProgress = mutableStateMapOf<String, Int>()
     private val practiceQuestionBankIds = mutableStateMapOf<String, String>()
@@ -5123,6 +5127,7 @@ object QuizRepository {
             sequentialNextIndex = practiceSequentialNextIndexAfterComplete
         )
         writeSavedPracticeSession(currentPracticeScopeKey(), snapshot, sync)
+        practiceSnapshotVersion++
     }
 
     fun discardSavedPracticeSession() {
@@ -5132,6 +5137,7 @@ object QuizRepository {
             if (map.remove(currentPracticeScopeKey()) == null) return@runCatching
             context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
                 .putString(KEY_PRACTICE_SESSION, map.toString()).apply()
+            practiceSnapshotVersion++
         }
     }
 
