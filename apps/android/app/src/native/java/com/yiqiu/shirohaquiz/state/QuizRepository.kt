@@ -237,6 +237,7 @@ object QuizRepository {
     private const val KEY_PRACTICE_PREFERRED_COUNT_MODE = "practice_preferred_count_mode"
     private const val KEY_PRACTICE_PREFERRED_CUSTOM_COUNT = "practice_preferred_custom_count"
     private const val KEY_PRACTICE_PREFERRED_ORDER_MODE = "practice_preferred_order_mode"
+    private const val KEY_PRACTICE_SESSION = "practice_session_snapshots"
     private const val KEY_PRACTICE_SEQUENTIAL_PROGRESS = "practice_sequential_progress"
     private const val KEY_PRACTICE_RECITE_SEQUENTIAL_PROGRESS = "practice_recite_sequential_progress"
     private const val KEY_PRACTICE_PREFERRED_TYPE_NAMES = "practice_preferred_type_names"
@@ -442,6 +443,9 @@ object QuizRepository {
         private set
     val practiceSessionResults = mutableStateMapOf<String, Boolean>()
     val practiceAnswerResults = mutableStateMapOf<String, StudyQuestionResult>()
+    /** 本次进入练习是否由「上次未完成进度」恢复而来（界面据此显示提示条）。 */
+    var practiceRestoredFromSnapshot by mutableStateOf(false)
+
     val practiceSequentialProgress = mutableStateMapOf<String, Int>()
     private val practiceReciteSequentialProgress = mutableStateMapOf<String, Int>()
     private val practiceQuestionBankIds = mutableStateMapOf<String, String>()
@@ -1448,6 +1452,8 @@ object QuizRepository {
         practiceSequentialStartIndex = null
         practiceSequentialUsesReciteProgress = false
         practiceSequentialNextIndexAfterComplete = null
+        discardSavedPracticeSession()
+        practiceRestoredFromSnapshot = false
         return true
     }
 
@@ -1688,13 +1694,17 @@ object QuizRepository {
     }
 
     fun completePracticeSession() {
+        discardSavedPracticeSession()
         finishPracticeSessionIfNeeded(advanceSequentialProgress = true)
         resetPracticeState()
+        practiceRestoredFromSnapshot = false
     }
 
     fun endPracticeSession() {
+        persistPracticeSessionSnapshot(sync = true)
         finishPracticeSessionIfNeeded(advanceSequentialProgress = false)
         resetPracticeState()
+        practiceRestoredFromSnapshot = false
     }
 
     fun canSaveSequentialProgressOnPracticeExit(): Boolean {
@@ -1705,8 +1715,10 @@ object QuizRepository {
 
     fun endPracticeSessionSavingSequentialProgress() {
         val progressSaved = saveSequentialProgressForPracticeExit()
+        persistPracticeSessionSnapshot(sync = true)
         finishPracticeSessionIfNeeded(advanceSequentialProgress = false)
         resetPracticeState()
+        practiceRestoredFromSnapshot = false
         if (progressSaved) persist()
     }
 
@@ -1716,6 +1728,7 @@ object QuizRepository {
         val maxIndex = if (practiceMode == PRACTICE_MODE_BATCH) practiceCurrentBatchEndIndex() else questions.lastIndex
         practiceIndex = (practiceIndex + 1).coerceAtMost(maxIndex)
         restorePracticeSelectionForCurrentQuestion()
+        persistPracticeSessionSnapshot()
     }
 
     fun previousQuestion() {
@@ -1724,6 +1737,7 @@ object QuizRepository {
         val minIndex = if (practiceMode == PRACTICE_MODE_BATCH) practiceCurrentBatchStartIndex() else 0
         practiceIndex = (practiceIndex - 1).coerceAtLeast(minIndex)
         restorePracticeSelectionForCurrentQuestion()
+        persistPracticeSessionSnapshot()
     }
 
     fun openWrongQuestion(entry: WrongQuestionEntry) {
@@ -2039,6 +2053,7 @@ object QuizRepository {
                 }
             }
         }
+        persistPracticeSessionSnapshot()
     }
 
     fun setPracticeNextRequiresResult(context: Context, enabled: Boolean) {
@@ -2565,6 +2580,7 @@ object QuizRepository {
             sourceBankName = bank?.name
         )
         upsertPracticeRecordSnapshot()
+        persistPracticeSessionSnapshot()
 
         // AI 临时答案只用于当前练习会话判定，不写回题库，也不据此改动错题本。
         if (temporaryReferenceAnswer == null) {
@@ -2629,6 +2645,7 @@ object QuizRepository {
         practiceBatchSubmitted = true
         practiceIndex = practiceCurrentBatchStartIndex()
         restorePracticeSelectionForCurrentQuestion()
+        persistPracticeSessionSnapshot()
         persist()
         return true
     }
@@ -2725,6 +2742,7 @@ object QuizRepository {
         val maxIndex = if (practiceMode == PRACTICE_MODE_BATCH) practiceCurrentBatchEndIndex() else questions.lastIndex
         practiceIndex = index.coerceIn(minIndex, maxIndex)
         restorePracticeSelectionForCurrentQuestion()
+        persistPracticeSessionSnapshot()
     }
 
     fun preferredPracticeBatchGroupSize(): Int {
@@ -5007,6 +5025,166 @@ object QuizRepository {
         practiceSequentialProgress[bankId] = nextProgressIndex.coerceAtLeast(0)
         markContentDirty(KEY_PRACTICE_SEQUENTIAL_PROGRESS)
         return true
+    }
+
+    /**
+     * 会话快照：整场练习（队列、题号、草稿、已答结果）按「练习范围」落盘。
+     * 退出、换库、进程被杀之后，回到同一范围可以把这一场原样接上。
+     */
+    private fun savedPracticeSessions(): JSONObject {
+        val context = appContext ?: return JSONObject()
+        val raw = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .getString(KEY_PRACTICE_SESSION, null)
+        if (raw.isNullOrBlank()) return JSONObject()
+        return runCatching { JSONObject(raw) }.getOrDefault(JSONObject())
+    }
+
+    private fun savedPracticeSessionForCurrentScope(): PracticeSessionSnapshot? =
+        PracticeSessionSnapshot.fromJson(savedPracticeSessions().optJSONObject(currentPracticeScopeKey()))
+
+    fun hasSavedPracticeSession(): Boolean = savedPracticeSessionForCurrentScope() != null
+
+    /** 界面用：当前停在第几题 / 共几题 / 已答几题。 */
+    fun savedPracticeSessionSummary(): Triple<Int, Int, Int>? {
+        val snapshot = savedPracticeSessionForCurrentScope() ?: return null
+        val answered = maxOf(snapshot.answers.size, snapshot.drafts.size)
+        return Triple(snapshot.index + 1, snapshot.sessionKeys.size, answered)
+    }
+
+    private fun writeSavedPracticeSession(scopeKey: String, snapshot: PracticeSessionSnapshot?, sync: Boolean) {
+        val context = appContext ?: return
+        val map = savedPracticeSessions()
+        if (snapshot == null) map.remove(scopeKey) else map.put(scopeKey, snapshot.toJson())
+        val editor = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
+            .putString(KEY_PRACTICE_SESSION, map.toString())
+        if (sync) editor.commit() else editor.apply()
+    }
+
+    /** 把当前内存里的这一场写成快照；每答一题、改草稿、切题、退出都会调用。 */
+    fun persistPracticeSessionSnapshot(sync: Boolean = false) {
+        val startedAt = practiceStartedAt ?: return
+        if (practiceQuestions.isEmpty() || practiceQuestionSessionKeys.size != practiceQuestions.size) return
+        val answers = buildMap {
+            practiceQuestionSessionKeys.forEach { key ->
+                practiceAnswerResults[key]?.let { result ->
+                    put(
+                        key,
+                        SavedAnswer(
+                            userAnswer = result.userAnswer,
+                            userBlankAnswers = result.userBlankAnswers,
+                            correct = result.correct,
+                            answerText = result.answerText,
+                            earnedScore = result.earnedScore,
+                            maxScore = result.maxScore,
+                            autoScored = result.autoScored,
+                            sourceBankId = result.sourceBankId,
+                            sourceBankName = result.sourceBankName
+                        )
+                    )
+                }
+            }
+        }
+        val drafts = buildMap {
+            practiceQuestionSessionKeys.forEach { key ->
+                practiceDraftAnswers[key]
+                    ?.takeIf { draft -> draft.any { it.isNotBlank() } }
+                    ?.let { put(key, it) }
+            }
+        }
+        val snapshot = PracticeSessionSnapshot(
+            startedAt = startedAt,
+            practiceMode = practiceMode,
+            sourceLabel = practiceSourceLabel,
+            scopeType = practiceSessionScopeType,
+            scopeName = practiceSessionScopeName,
+            index = practiceIndex,
+            batchGroupSize = practiceBatchGroupSize,
+            batchSubmitted = practiceBatchSubmitted,
+            batchGroupStartIndex = practiceBatchGroupStartIndex,
+            shuffleSeed = practiceOptionShuffleSeed,
+            sessionKeys = practiceQuestionSessionKeys.toList(),
+            questionsJson = questionsToJsonArray(practiceQuestions).toString(),
+            selectedAnswer = selectedAnswer.toList(),
+            answers = answers,
+            drafts = drafts,
+            sequentialBankId = practiceSequentialBankId,
+            sequentialStartIndex = practiceSequentialStartIndex,
+            sequentialUsesRecite = practiceSequentialUsesReciteProgress,
+            sequentialNextIndex = practiceSequentialNextIndexAfterComplete
+        )
+        writeSavedPracticeSession(currentPracticeScopeKey(), snapshot, sync)
+    }
+
+    fun discardSavedPracticeSession() {
+        val context = appContext ?: return
+        val map = savedPracticeSessions()
+        if (map.remove(currentPracticeScopeKey()) == null) return
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
+            .putString(KEY_PRACTICE_SESSION, map.toString()).apply()
+    }
+
+    /** 把上次那一场原样接回来：队列、题号、已答结果、草稿、选项顺序都不变。 */
+    fun resumeSavedPracticeSession(): Boolean {
+        val snapshot = savedPracticeSessionForCurrentScope() ?: return false
+        val parsed = runCatching { parseQuestionsArray(JSONArray(snapshot.questionsJson)) }
+            .getOrNull()
+            .orEmpty()
+        if (parsed.isEmpty() || parsed.size != snapshot.sessionKeys.size) {
+            discardSavedPracticeSession()
+            return false
+        }
+        val indexByKey = snapshot.sessionKeys.withIndex().associate { (index, key) -> key to index }
+        practiceQuestions = parsed.toMutableList()
+        practiceQuestionSessionKeys = snapshot.sessionKeys
+        practiceIndex = snapshot.index.coerceIn(0, parsed.lastIndex)
+        practiceMode = normalizePracticeMode(snapshot.practiceMode)
+        practiceSourceLabel = snapshot.sourceLabel
+        practiceSessionScopeType = snapshot.scopeType
+        practiceSessionScopeName = snapshot.scopeName
+        practiceBatchGroupSize = snapshot.batchGroupSize.coerceIn(1, parsed.size)
+        practiceBatchSubmitted = snapshot.batchSubmitted
+        practiceBatchGroupStartIndex = snapshot.batchGroupStartIndex.coerceIn(0, parsed.lastIndex)
+        practiceOptionShuffleSeed = if (snapshot.shuffleSeed > 0L) snapshot.shuffleSeed else System.currentTimeMillis()
+        practiceStartedAt = snapshot.startedAt
+        practiceSessionResults.clear()
+        practiceAnswerResults.clear()
+        practiceDraftAnswers.clear()
+        practiceQuestionBankIds.clear()
+        snapshot.sessionKeys.forEach { key ->
+            key.substringBefore('#').takeIf { it.isNotBlank() }?.let { practiceQuestionBankIds[key] = it }
+        }
+        snapshot.answers.forEach { (key, answer) ->
+            val question = indexByKey[key]?.let { parsed.getOrNull(it) } ?: return@forEach
+            practiceAnswerResults[key] = StudyQuestionResult(
+                question = question,
+                userAnswer = answer.userAnswer,
+                userBlankAnswers = answer.userBlankAnswers,
+                correct = answer.correct,
+                answerText = answer.answerText,
+                earnedScore = answer.earnedScore,
+                maxScore = answer.maxScore,
+                autoScored = answer.autoScored,
+                sourceBankId = answer.sourceBankId,
+                sourceBankName = answer.sourceBankName
+            )
+            practiceSessionResults[key] = answer.correct
+        }
+        snapshot.drafts.forEach { (key, draft) -> practiceDraftAnswers[key] = draft }
+        practiceSequentialBankId = snapshot.sequentialBankId
+        practiceSequentialStartIndex = snapshot.sequentialStartIndex
+        practiceSequentialUsesReciteProgress = snapshot.sequentialUsesRecite
+        practiceSequentialNextIndexAfterComplete = snapshot.sequentialNextIndex
+        practiceRestoredFromSnapshot = true
+        practiceLastResult = null
+        restorePracticeSelectionForCurrentQuestion()
+        return true
+    }
+
+    /** 放弃上次进度：清掉快照并回到开始页。 */
+    fun abandonSavedPracticeSession() {
+        discardSavedPracticeSession()
+        resetPracticeState()
+        practiceRestoredFromSnapshot = false
     }
 
     /**

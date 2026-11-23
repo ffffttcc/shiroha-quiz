@@ -145,6 +145,12 @@ fun PracticeScreen(
     // 进入练习页就预热本范围的题库（IO 线程），避免点「开始」时在主线程解析。
     LaunchedEffect(Unit) { QuizRepository.preloadPracticeScopeBanks() }
     val practiceScopeKey = QuizRepository.currentPracticeScopeKey()
+    // 这个范围上次没做完就直接接回来：队列、题号、草稿、已答结果都不变。
+    LaunchedEffect(practiceScopeKey) {
+        if (QuizRepository.practiceQuestions.isEmpty() && QuizRepository.hasSavedPracticeSession()) {
+            QuizRepository.resumeSavedPracticeSession()
+        }
+    }
     val practiceScopeLabel = QuizRepository.currentPracticeScopeLabel()
     val practiceScopeSummary = QuizRepository.currentPracticeScopeSummary()
     val autoNextScope = rememberCoroutineScope()
@@ -451,6 +457,25 @@ fun PracticeScreen(
                                 modifier = Modifier.height(44.dp),
                                 onClick = onGoExam
                             )
+                        }
+                    }
+                }
+            }
+
+            if (isPracticeRunning && QuizRepository.practiceRestoredFromSnapshot) {
+                GlassCard {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(ShirohaSpacing.Sm)
+                    ) {
+                        Text(
+                            text = "已恢复上次进度 · 第 ${QuizRepository.practiceIndex + 1}/${QuizRepository.practiceQuestions.size} 题",
+                            modifier = Modifier.weight(1f),
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+                        TextButton(onClick = { QuizRepository.abandonSavedPracticeSession() }) {
+                            Text("重新开始")
                         }
                     }
                 }
