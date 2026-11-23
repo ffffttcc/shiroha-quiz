@@ -1416,6 +1416,7 @@ object QuizRepository {
         practiceBatchSubmitted = false
         practiceBatchGroupSize = batchGroupSize.coerceIn(1, count)
         practiceBatchGroupStartIndex = 0
+        finishPracticeSessionIfNeeded(advanceSequentialProgress = false)
         practiceSessionResults.clear()
         practiceAnswerResults.clear()
         practiceDraftAnswers.clear()
@@ -4999,11 +5000,16 @@ object QuizRepository {
     }
 
     private fun finishPracticeSessionIfNeeded(advanceSequentialProgress: Boolean = false) {
-        if (practiceQuestions.isEmpty() || practiceAnswerResults.isEmpty()) return
+        val draftAnsweredCount = practiceQuestions.indices.count { index ->
+            practiceSessionKeyAt(index)?.let { practiceDraftAnswers[it]?.isNotEmpty() } == true
+        }
+        if (practiceQuestions.isEmpty()) return
+        if (practiceAnswerResults.isEmpty() && draftAnsweredCount == 0) return
         val now = System.currentTimeMillis()
         val startedAt = practiceStartedAt ?: now
         val orderedResults = practiceQuestions.indices.mapNotNull { index -> practiceSessionKeyAt(index)?.let { practiceAnswerResults[it] } }
-        if (orderedResults.isEmpty()) return
+        if (orderedResults.isEmpty() && draftAnsweredCount == 0) return
+        val answeredCount = if (orderedResults.isNotEmpty()) orderedResults.size else draftAnsweredCount
         val correctCount = orderedResults.count { it.autoScored && it.correct }
         val involvedBankIds = practiceQuestionSessionKeys.mapNotNull { practiceQuestionBankIds[it] }.distinct()
         val isGroupSession = practiceSessionScopeType == PRACTICE_SCOPE_GROUP
@@ -5026,7 +5032,7 @@ object QuizRepository {
                 },
                 source = recordSource,
                 title = if (practiceSessionScopeType == PRACTICE_SCOPE_GROUP) "${practiceSessionScopeName.orEmpty()} · 分组练习" else practiceSourceLabel.ifBlank { "练习记录" },
-                total = orderedResults.size,
+                total = answeredCount,
                 correct = correctCount,
                 timestamp = now,
                 durationSeconds = ((now - startedAt) / 1000L).toInt().coerceAtLeast(0),
