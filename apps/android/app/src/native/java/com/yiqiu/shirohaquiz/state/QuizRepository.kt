@@ -48,6 +48,11 @@ data class QuizBank(
     val name: String,
     val questions: List<Question>,
     val groupName: String = DEFAULT_BANK_GROUP_NAME,
+    /**
+     * 书级分组（同一本书下的多章）。空串 = 退化回现在的一级（只有分组）。
+     * **刻意不参与 groupName 与 contentHash**：groupName 是云端身份键、contentHash 只哈希 questions。
+     */
+    val bookName: String = "",
     /** 材料 id → 原文（阅读/完形文章），题干里只留残余。 */
     val materials: Map<String, String> = emptyMap()
 )
@@ -4324,6 +4329,7 @@ object QuizRepository {
         context: Context,
         groupName: String,
         name: String,
+        bookName: String = "",
         questions: List<com.yiqiu.shirohaquiz.importer.model.Question>
     ): Boolean {
         appContext = context.applicationContext
@@ -4335,7 +4341,7 @@ object QuizRepository {
         return if (existing != null) {
             val index = banks.indexOfFirst { it.id == existing.id }
             if (index < 0) return false
-            banks[index] = existing.copy(questions = questions)
+            banks[index] = existing.copy(questions = questions, bookName = bookName.ifBlank { existing.bookName })
             markBankDirty(existing.id)
             markContentDirty(KEY_BANKS)
             persist()
@@ -4346,7 +4352,8 @@ object QuizRepository {
                     id = "bank_${System.currentTimeMillis()}_sync",
                     name = uniqueBankNameInGroup(cleanName, cleanGroupName),
                     questions = questions,
-                    groupName = cleanGroupName
+                    groupName = cleanGroupName,
+                    bookName = bookName
                 )
             )
             banks += created
@@ -6350,7 +6357,8 @@ object QuizRepository {
                     id = id,
                     name = item.optString("name"),
                     questions = emptyList(),
-                    groupName = normalizeBankGroupName(item.optString("groupName", DEFAULT_BANK_GROUP_NAME))
+                    groupName = normalizeBankGroupName(item.optString("groupName", DEFAULT_BANK_GROUP_NAME)),
+                    bookName = item.optString("bookName")
                 )
             )
         }
@@ -6576,23 +6584,23 @@ object QuizRepository {
     private fun bankIndexJson(banks: List<QuizBank>): String {
         val array = JSONArray()
         banks.forEach { bank ->
-            array.put(
-                JSONObject()
-                    .put("id", bank.id)
-                    .put("name", bank.name)
-                    .put("groupName", normalizeBankGroupName(bank.groupName))
-                    .put(
-                        "questionCount",
-                        if (unloadedBankIds.contains(bank.id)) {
-                            indexedBankQuestionCounts[bank.id] ?: bank.questions.size
-                        } else {
-                            bank.questions.size
-                        }
-                    )
-                    .put("typeCounts", bankTypeCountsJson(bank))
-                    .put("file", bankStorageSafeId(bank.id) + ".json")
-                    .put("version", System.currentTimeMillis())
-            )
+            val indexJson = JSONObject()
+                .put("id", bank.id)
+                .put("name", bank.name)
+                .put("groupName", normalizeBankGroupName(bank.groupName))
+                .put(
+                    "questionCount",
+                    if (unloadedBankIds.contains(bank.id)) {
+                        indexedBankQuestionCounts[bank.id] ?: bank.questions.size
+                    } else {
+                        bank.questions.size
+                    }
+                )
+                .put("typeCounts", bankTypeCountsJson(bank))
+                .put("file", bankStorageSafeId(bank.id) + ".json")
+                .put("version", System.currentTimeMillis())
+            if (bank.bookName.isNotBlank()) indexJson.put("bookName", bank.bookName)
+            array.put(indexJson)
         }
         return array.toString()
     }
@@ -6787,6 +6795,7 @@ object QuizRepository {
             bankJson.put("id", bank.id)
             bankJson.put("name", bank.name)
             bankJson.put("groupName", normalizeBankGroupName(bank.groupName))
+            if (bank.bookName.isNotBlank()) bankJson.put("bookName", bank.bookName)
             bankJson.put("questions", questionsToJsonArray(bank.questions, assetMapping))
             if (bank.materials.isNotEmpty()) {
                 val materialsJson = JSONObject()
@@ -6916,6 +6925,7 @@ object QuizRepository {
                         name = bankJson.optString("name"),
                         questions = parseQuestionsArray(bankJson.optJSONArray("questions")),
                         groupName = normalizeBankGroupName(bankJson.optString("groupName", DEFAULT_BANK_GROUP_NAME)),
+                        bookName = bankJson.optString("bookName"),
                         materials = parseMaterialsJson(bankJson.optJSONObject("materials"))
                     )
                 )

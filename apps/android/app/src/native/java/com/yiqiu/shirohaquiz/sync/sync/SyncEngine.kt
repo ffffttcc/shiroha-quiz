@@ -49,7 +49,7 @@ class SyncEngine(
     private val keys: SyncKeys,
     private val state: SyncStateStore,
     private val localBanks: () -> List<QuizBank>,
-    private val applyRemoteBank: (groupName: String, name: String, questions: List<Question>) -> Boolean,
+    private val applyRemoteBank: (groupName: String, name: String, questions: List<Question>, bookName: String) -> Boolean,
     private val renameLocalBank: (bankId: String, newName: String) -> Unit,
     private val clockMillis: () -> Long = System::currentTimeMillis,
     private val localEvents: () -> List<StudyEvent> = { emptyList() },
@@ -126,7 +126,7 @@ class SyncEngine(
                 val decoded = pending.getValue(entry.key)
                 // 落盘失败必须显式失败：以前忽略返回值还照样 downloaded++，
                 // 结果下一轮又发现「本地没有这个库」→ 再下一次同样的对象（真机死循环）。
-                val applied = applyRemoteBank(decoded.groupName, decoded.name, decoded.questions)
+                val applied = applyRemoteBank(decoded.groupName, decoded.name, decoded.questions, decoded.bookName)
                 if (!applied) {
                     return@runLocked Report(
                         ok = false,
@@ -145,9 +145,9 @@ class SyncEngine(
                 val copyName = decisionByName.getValue(entry.key).copyName
                 if (remoteWins) {
                     renameLocalBank(entry.localBank!!.id, copyName)
-                    applyRemoteBank(decoded.groupName, decoded.name, decoded.questions)
+                    applyRemoteBank(decoded.groupName, decoded.name, decoded.questions, decoded.bookName)
                 } else {
-                    applyRemoteBank(decoded.groupName, copyName, decoded.questions)
+                    applyRemoteBank(decoded.groupName, copyName, decoded.questions, decoded.bookName)
                     uploadsNeeded += entry
                 }
                 conflicts++
@@ -166,7 +166,7 @@ class SyncEngine(
             uploadsNeeded.forEach { entry ->
                 val bank = entry.localBank ?: return@forEach
                 val hash = SyncIdentity.contentHash(bank)
-                val payload = SyncBankCodec.encode(SyncIdentity.normalizeGroupName(bank.groupName), bank.name, bank.questions)
+                val payload = SyncBankCodec.encode(SyncIdentity.normalizeGroupName(bank.groupName), bank.name, bank.questions, bank.bookName)
                 val encrypted = keys.encrypt(payload, SyncPayloadCipher.aadForContent(hash))
                 client.putSyncObject(SyncObjects.bankName(hash), encrypted)
                 uploaded++

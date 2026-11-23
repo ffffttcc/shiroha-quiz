@@ -10,7 +10,13 @@ import com.yiqiu.shirohaquiz.importer.model.QuestionType
 import org.json.JSONArray
 import org.json.JSONObject
 
-data class DecodedSyncBank(val groupName: String, val name: String, val questions: List<Question>)
+data class DecodedSyncBank(
+    val groupName: String,
+    val name: String,
+    val questions: List<Question>,
+    /** 书级分组；旧 blob（version=1）没有该字段 → 空串，退化回一级。 */
+    val bookName: String = ""
+)
 
 /**
  * 单库传输格式：只装题库内容，不掺错题/收藏/记录。
@@ -20,13 +26,14 @@ data class DecodedSyncBank(val groupName: String, val name: String, val question
  * 图片素材本身不随同步传输（跨设备路径无效），只带结构字段。
  */
 object SyncBankCodec {
-    private const val FORMAT_VERSION = 1
+    private const val FORMAT_VERSION = 2
 
-    fun encode(groupName: String, name: String, questions: List<Question>): ByteArray {
+    fun encode(groupName: String, name: String, questions: List<Question>, bookName: String = ""): ByteArray {
         val root = JSONObject()
         root.put("syncVersion", FORMAT_VERSION)
         root.put("groupName", groupName)
         root.put("name", name)
+        if (bookName.isNotBlank()) root.put("bookName", bookName)
         val array = JSONArray()
         questions.forEach { array.put(questionToJson(it)) }
         root.put("questions", array)
@@ -44,7 +51,8 @@ object SyncBankCodec {
         return DecodedSyncBank(
             groupName = root.optString("groupName"),
             name = root.optString("name"),
-            questions = questions
+            questions = questions,
+            bookName = root.optString("bookName")
         )
     }
 

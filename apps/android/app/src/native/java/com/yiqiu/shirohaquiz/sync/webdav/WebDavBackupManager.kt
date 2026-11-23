@@ -117,8 +117,8 @@ class WebDavBackupManager private constructor(
                     bank.id in loadFailures || bank.id in unloadedViolations
                 }
             },
-            applyRemoteBank = { groupName, name, questions ->
-                QuizRepository.applySyncedBank(appContext, groupName, name, questions)
+            applyRemoteBank = { groupName, name, questions, bookName ->
+                QuizRepository.applySyncedBank(appContext, groupName = groupName, name = name, bookName = bookName, questions = questions)
             },
             renameLocalBank = { bankId, newName -> QuizRepository.renameBank(appContext, bankId, newName) }
         )
