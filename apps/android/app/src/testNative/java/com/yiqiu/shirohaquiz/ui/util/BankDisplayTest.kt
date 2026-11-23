@@ -110,4 +110,41 @@ class BankDisplayTest {
             assertTrue("第 $i 位逆序：${numbered[i - 1]} > ${numbered[i]}", numbered[i - 1] < numbered[i])
         }
     }
+
+    @Test
+    fun bookSections_groupsByBookWithBlankFirst() {
+        fun bank(name: String, book: String) = QuizBank(
+            id = "b_$name",
+            name = name,
+            questions = emptyList(),
+            bookName = book
+        )
+        val input = listOf(
+            bank("02 第二章 B", "药理十四五小蓝本"),
+            bank("01 第一章 A", "药理十四五小蓝本"),
+            bank("药理学复习指南", "药理学复习指南"),
+            bank("99 无书库", "")
+        )
+        val sections = bookSections(input)
+        assertEquals(3, sections.size)
+        assertEquals("", sections[0].bookName)
+        // 书序按 Kotlin 字符串序（UTF-16 码点）：「十」(U+5341) < 「学」(U+5B66)，
+        // 故「药理十四五小蓝本」排在「药理学复习指南」之前。
+        assertEquals("药理十四五小蓝本", sections[1].bookName)
+        assertEquals("药理学复习指南", sections[2].bookName)
+        assertEquals(listOf("01 第一章 A", "02 第二章 B"), sections[1].banks.map { it.name })
+    }
+
+    @Test
+    fun bookSections_blankOnlyKeepsChapterOrder() {
+        fun bank(name: String) = QuizBank(id = "b_$name", name = name, questions = emptyList())
+        val input = listOf(bank("28 第二十八章 X"), bank("01 第一章 Y"), bank("24 第二十四章 Z"))
+        val sections = bookSections(input)
+        assertEquals(1, sections.size)
+        assertTrue(sections[0].bookName.isBlank())
+        assertEquals(
+            listOf("01 第一章 Y", "24 第二十四章 Z", "28 第二十八章 X"),
+            sections[0].banks.map { it.name }
+        )
+    }
 }
