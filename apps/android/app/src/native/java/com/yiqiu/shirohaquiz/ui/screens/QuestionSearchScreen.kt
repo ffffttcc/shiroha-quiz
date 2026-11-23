@@ -64,6 +64,7 @@ import com.yiqiu.shirohaquiz.ui.theme.ShirohaColors
 import com.yiqiu.shirohaquiz.ui.theme.ShirohaRadius
 import com.yiqiu.shirohaquiz.ui.theme.ShirohaSpacing
 import com.yiqiu.shirohaquiz.ui.util.bankDisplayPath
+import com.yiqiu.shirohaquiz.ui.util.chapterDisplayOrder
 
 private const val SCOPE_ACTIVE = "active"
 private const val SCOPE_ALL = "all"
@@ -305,7 +306,7 @@ private fun SearchScopeDialog(
                         fontWeight = FontWeight.SemiBold,
                         modifier = Modifier.padding(top = 8.dp)
                     )
-                    entry.value.forEach { bank ->
+                    entry.value.sortedWith(chapterDisplayOrder).forEach { bank ->
                         val key = bank.scopeKey()
                         SearchScopeOption(
                             title = bank.name,

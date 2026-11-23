@@ -46,6 +46,7 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.yiqiu.shirohaquiz.ui.util.chapterDisplayOrder
 import com.yiqiu.shirohaquiz.R
 import com.yiqiu.shirohaquiz.importer.model.MultiBlankSupport
 import com.yiqiu.shirohaquiz.importer.model.QuestionType
@@ -689,7 +690,7 @@ private fun WrongBookScopeDialog(
                         fontWeight = FontWeight.SemiBold,
                         modifier = Modifier.padding(top = 8.dp)
                     )
-                    entry.value.forEach { bank ->
+                    entry.value.sortedWith(chapterDisplayOrder).forEach { bank ->
                         val key = WRONG_BOOK_PAGE_SCOPE_BANK_PREFIX + bank.id
                         WrongBookScopeOption(
                             title = bank.name,

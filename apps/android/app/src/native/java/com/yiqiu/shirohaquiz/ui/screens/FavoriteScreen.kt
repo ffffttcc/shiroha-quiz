@@ -41,6 +41,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.yiqiu.shirohaquiz.ui.util.chapterDisplayOrder
 import com.yiqiu.shirohaquiz.R
 import com.yiqiu.shirohaquiz.importer.model.QuestionType
 import com.yiqiu.shirohaquiz.state.DEFAULT_BANK_GROUP_NAME
@@ -304,7 +305,7 @@ private fun FavoriteScopeDialog(
                         fontWeight = FontWeight.SemiBold,
                         modifier = Modifier.padding(top = 8.dp)
                     )
-                    entry.value.forEach { bank ->
+                    entry.value.sortedWith(chapterDisplayOrder).forEach { bank ->
                         val key = FAVORITE_SCOPE_BANK_PREFIX + bank.id
                         FavoriteScopeOption(
                             title = bank.name,

@@ -1,5 +1,6 @@
 package com.yiqiu.shirohaquiz.ui.screens
 
+import com.yiqiu.shirohaquiz.ui.util.chapterDisplayOrder
 import com.yiqiu.shirohaquiz.ui.components.shirohaNoRippleClickable
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
@@ -294,7 +295,7 @@ private fun RecordScopeDialog(
                         fontWeight = FontWeight.SemiBold,
                         modifier = Modifier.padding(top = 8.dp)
                     )
-                    entry.value.forEach { bank ->
+                    entry.value.sortedWith(chapterDisplayOrder).forEach { bank ->
                         val key = RECORD_SCOPE_BANK_PREFIX + bank.id
                         val bankNameIsUnique = bankNameCounts[bank.name.trim()] == 1
                         val count = records.count { record ->
