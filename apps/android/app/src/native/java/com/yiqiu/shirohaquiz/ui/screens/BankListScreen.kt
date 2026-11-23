@@ -65,6 +65,7 @@ import com.yiqiu.shirohaquiz.ui.theme.ShirohaRadius
 import com.yiqiu.shirohaquiz.ui.theme.ShirohaSpacing
 import com.yiqiu.shirohaquiz.ui.util.bankDisplayPath
 import com.yiqiu.shirohaquiz.ui.util.chapterDisplayOrder
+import com.yiqiu.shirohaquiz.ui.util.bookSections
 
 @Composable
 fun BankListScreen(
@@ -83,6 +84,7 @@ fun BankListScreen(
     var deleteTarget by remember { mutableStateOf<QuizBank?>(null) }
     // 分组一律默认收起（含当前题库所在分组）；用户手点后由 rememberSaveable 记住。
     var expandedGroups by rememberSaveable { mutableStateOf<List<String>>(emptyList()) }
+    var collapsedBooks by rememberSaveable { mutableStateOf<List<String>>(emptyList()) }
 
     if (editTarget != null) {
         AlertDialog(
@@ -311,7 +313,26 @@ fun BankListScreen(
             }
 
             if (isExpanded) {
-                items(banksInGroup, key = { "b:${it.id}" }) { bank ->
+                bookSections(banksInGroup).forEach { section ->
+                    val bookKey = "$groupName|${section.bookName}"
+                    if (section.bookName.isNotBlank()) {
+                        item(key = "bk:$bookKey") {
+                            BookSectionHeader(
+                                bookName = section.bookName,
+                                bankCount = section.banks.size,
+                                collapsed = bookKey in collapsedBooks,
+                                onToggle = {
+                                    collapsedBooks = if (bookKey in collapsedBooks) {
+                                        collapsedBooks - bookKey
+                                    } else {
+                                        (collapsedBooks + bookKey).distinct()
+                                    }
+                                }
+                            )
+                        }
+                    }
+                    if (section.bookName.isBlank() || bookKey !in collapsedBooks) {
+                items(section.banks, key = { "b:${it.id}" }) { bank ->
                     BankCard(
                         bank = bank,
                         isActive = bank.id == activeBank?.id,
@@ -332,6 +353,8 @@ fun BankListScreen(
                             }
                         }
                     )
+                }
+                    }
                 }
             }
         }
@@ -511,5 +534,36 @@ private fun CompactBankStateChip(
                 maxLines = 1
             )
         }
+    }
+}
+
+@Composable
+private fun BookSectionHeader(
+    bookName: String,
+    bankCount: Int,
+    collapsed: Boolean,
+    onToggle: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(start = 16.dp, top = 8.dp, bottom = 2.dp)
+            .shirohaNoRippleClickable(onClick = onToggle),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(
+            imageVector = if (collapsed) Icons.Rounded.ChevronRight else Icons.Rounded.ExpandMore,
+            contentDescription = if (collapsed) "展开书目" else "收起书目",
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.size(18.dp)
+        )
+        Text(
+            text = "$bookName · $bankCount",
+            style = MaterialTheme.typography.titleSmall,
+            fontWeight = FontWeight.Medium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
     }
 }

@@ -43,3 +43,11 @@ fun chapterSortKey(name: String): Int {
  */
 val chapterDisplayOrder: Comparator<QuizBank> =
     compareBy<QuizBank> { chapterSortKey(it.name) }.thenBy { it.name }
+
+/** 组内「书」这一级：bookName 为空表示未归书，排最前。 */
+data class BankBookSection(val bookName: String, val banks: List<QuizBank>)
+
+fun bookSections(banks: List<QuizBank>): List<BankBookSection> =
+    banks.groupBy { it.bookName.trim() }
+        .map { (book, list) -> BankBookSection(book, list.sortedWith(chapterDisplayOrder)) }
+        .sortedWith(compareBy<BankBookSection>({ if (it.bookName.isBlank()) 0 else 1 }, { it.bookName }))
