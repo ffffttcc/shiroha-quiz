@@ -73,7 +73,7 @@ class QuizRepositoryExamTest {
     }
 
     @Test
-    fun `wrong answer should enter wrong book and defer practice record until finished`() {
+    fun `wrong answer should enter wrong book and snapshot practice record immediately`() {
         seedBank()
         // 先启动练习：未启动时没有当前题，submitPracticeQuestion 会直接返回 null
         QuizRepository.startPracticeSession(
@@ -88,10 +88,11 @@ class QuizRepositoryExamTest {
         assertNotNull(result)
         assertFalse(result!!.correct)
         assertEquals(1, QuizRepository.wrongBook.size)
-        // 练习记录在整轮完成时产生；本轮共 2 题，仅提交 1 题不应提前生成记录
-        assertEquals(0, QuizRepository.studyRecords.size)
+        // 答题即落盘：本轮共 2 题，只答 1 题也应已生成本场记录（total=1）
+        assertEquals(1, QuizRepository.studyRecords.size)
+        assertEquals(1, QuizRepository.studyRecords.first().total)
 
-        // 答完剩余题目后结束练习，这时才应生成记录
+        // 答完剩余题目并结束练习：同一场记录被更新为 2 题，不新增第二条
         QuizRepository.toggleAnswer("A", multiple = true)
         QuizRepository.toggleAnswer("B", multiple = true)
         QuizRepository.submitPracticeQuestion()
@@ -99,6 +100,8 @@ class QuizRepositoryExamTest {
 
         assertEquals(1, QuizRepository.studyRecords.size)
         assertEquals("练习", QuizRepository.studyRecords.first().source)
+        // 交卷后同一场仍只有一条记录，条数更新为 2
+        assertEquals(2, QuizRepository.studyRecords.first().total)
     }
 
     @Test
