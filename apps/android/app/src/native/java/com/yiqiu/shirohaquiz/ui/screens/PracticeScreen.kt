@@ -150,7 +150,8 @@ fun PracticeScreen(
         mutableStateOf(false)
     }
     // 这个范围上次没做完就直接接回来：队列、题号、草稿、已答结果都不变。
-    LaunchedEffect(practiceScopeKey) {
+    // revision 随远端进度落地而变：别的设备刚推的进度不必等用户退出重进才生效。
+    LaunchedEffect(practiceScopeKey, QuizRepository.practiceProgressRevision) {
         if (QuizRepository.practiceQuestions.isEmpty() && QuizRepository.hasSavedPracticeSession()) {
             QuizRepository.resumeSavedPracticeSession()
         }

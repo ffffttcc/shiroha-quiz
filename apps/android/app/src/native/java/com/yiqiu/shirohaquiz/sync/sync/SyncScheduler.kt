@@ -47,7 +47,11 @@ object SyncScheduler {
         val request = OneTimeWorkRequestBuilder<SyncWorker>()
             .setConstraints(
                 Constraints.Builder()
-                    .setRequiredNetworkType(if (store.wifiOnly()) NetworkType.UNMETERED else NetworkType.CONNECTED)
+                    // 只推进度时忽略「仅 Wi-Fi」：这一包只有几十 KB，用户预期答题后几秒就上去；
+                    // 全量同步仍按用户的 Wi-Fi 设置走。
+                    .setRequiredNetworkType(
+                        if (!progressOnly && store.wifiOnly()) NetworkType.UNMETERED else NetworkType.CONNECTED
+                    )
                     .setRequiresStorageNotLow(true)
                     .build()
             )

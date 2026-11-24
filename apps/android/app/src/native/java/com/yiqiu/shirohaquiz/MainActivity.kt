@@ -63,6 +63,9 @@ class MainActivity : ComponentActivity() {
         com.yiqiu.shirohaquiz.sync.webdav.WebDavAutoBackup.schedule(applicationContext)
         // 打开 App 就静默拉一次（5 秒防抖），这样别的设备刚答的题和进度能立刻接上。
         runCatching { com.yiqiu.shirohaquiz.sync.sync.SyncScheduler.syncSoon(applicationContext, progressOnly = true) }
+        // 冷启动补登记周期同步：force-stop/覆盖安装会清掉 WorkManager 作业，
+        // 不补的话「15 分钟自动同步」会无声消失。
+        runCatching { com.yiqiu.shirohaquiz.sync.sync.SyncScheduler.schedule(applicationContext) }
         LauncherIconSwitcher.applyShirohaMode(applicationContext, QuizRepository.shirohaModeEnabled)
         applyStatusBarTheme(QuizRepository.darkThemeEnabled)
         setContent {

@@ -458,6 +458,10 @@ object QuizRepository {
     private var practiceStartedAt by mutableStateOf<Long?>(null)
 
     /** 当前这一场的开始时刻；界面用它区分「换了一场」，0 表示没在练。 */
+    /** 远端进度落地后 +1，界面据此重新读快照，不必等用户点进练习页。 */
+    var practiceProgressRevision by mutableStateOf(0)
+        private set
+
     val practiceSessionStartedAt: Long get() = practiceStartedAt ?: 0L
     private var practiceSessionScopeType: String? = null
     private var practiceSessionScopeName: String? = null
@@ -5088,6 +5092,7 @@ object QuizRepository {
             changed = true
         }
         if (changed) {
+            practiceProgressRevision += 1
             val context = appContext ?: return@runCatching false
             context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
                 .putString(KEY_PRACTICE_SESSION, local.toString())
