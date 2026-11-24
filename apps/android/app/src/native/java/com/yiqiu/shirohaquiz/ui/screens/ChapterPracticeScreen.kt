@@ -66,24 +66,39 @@ fun ChapterPracticeScreen(
     var notice by remember { mutableStateOf<String?>(null) }
 
     val allBanks = QuizRepository.banks
-    val currentBank = QuizRepository.activeBank()
     val scopeSummary = QuizRepository.currentPracticeScopeSummary()
 
+    // 搜索与分组（只做一次，避免重复遍历）
+    val normalizedQuery = query.trim()
+    val filteredBanks = remember(normalizedQuery) {
+        allBanks.filter { bank ->
+            normalizedQuery.isBlank() ||
+                bank.name.contains(normalizedQuery, ignoreCase = true) ||
+                bank.groupName.contains(normalizedQuery, ignoreCase = true)
+        }
+    }
+    val groupedBanks = remember(normalizedQuery) {
+        filteredBanks
+            .groupBy { it.groupName.ifBlank { DEFAULT_BANK_GROUP_NAME } }
+            .entries
+            .sortedBy { entry -> if (entry.key == DEFAULT_BANK_GROUP_NAME) "" else entry.key }
+    }
+
     // 「上一章 / 下一章」：在当前题库所属分组内按名称排序（章节名带 01/02 前缀，天然是教材顺序）。
-    val currentGroupName = currentBank?.groupName?.ifBlank { DEFAULT_BANK_GROUP_NAME }
+    val currentGroupName = QuizRepository.activeBank()?.groupName?.ifBlank { DEFAULT_BANK_GROUP_NAME }
     val siblings = if (currentGroupName == null) {
         emptyList()
     } else {
-        allBanks
+        QuizRepository.banks
             .filter { it.groupName.ifBlank { DEFAULT_BANK_GROUP_NAME } == currentGroupName }
             .sortedWith(chapterDisplayOrder)
     }
-    val currentIndex = siblings.indexOfFirst { it.id == currentBank?.id }
+    val currentIndex = siblings.indexOfFirst { it.id == QuizRepository.activeBank()?.id }
     val previousBank = if (currentIndex > 0) siblings[currentIndex - 1] else null
     val nextBank = if (currentIndex >= 0 && currentIndex < siblings.size - 1) siblings[currentIndex + 1] else null
 
     // 当前选中的章（用于高亮与导航），初始为当前题库，上一章/下一章只改它，不直接开练
-    var selectedBank by remember { mutableStateOf(currentBank) }
+    var selectedBank by remember { mutableStateOf(QuizRepository.activeBank()) }
 
     fun navigateToBank(bank: QuizBank?) {
         bank?.let { selectedBank = it }
@@ -100,25 +115,6 @@ fun ChapterPracticeScreen(
         )
     }
 
-    val normalizedQuery = query.trim()
-    val filteredBanks = QuizRepository.banks.filter { bank ->
-        normalizedQuery.isBlank() ||
-            bank.name.contains(normalizedQuery, ignoreCase = true) ||
-            bank.groupName.contains(normalizedQuery, ignoreCase = true)
-    }
-    val groupedBanks = QuizRepository.banks
-        .filter { bank ->
-            normalizedQuery.isBlank() ||
-                bank.name.contains(normalizedQuery, ignoreCase = true) ||
-                bank.groupName.contains(normalizedQuery, ignoreCase = true)
-        }
-        .groupBy { it.groupName.ifBlank { DEFAULT_BANK_GROUP_NAME } }
-        .entries
-        .sortedBy { entry -> if (entry.key == DEFAULT_BANK_GROUP_NAME) "" else entry.key }
-
-    val allBanks = QuizRepository.banks
-    val scopeSummary = QuizRepository.currentPracticeScopeSummary()
-
     Column(
         modifier = Modifier
             .verticalScroll(rememberScrollState())
@@ -132,7 +128,6 @@ fun ChapterPracticeScreen(
         )
 
         // 顶部操作栏：继续当前 / 上一章 / 下一章 / 开始练习
-        val currentGroupName = QuizRepository.activeBank()?.groupName?.ifBlank { DEFAULT_BANK_GROUP_NAME }
         val activeSiblings = if (currentGroupName == null) {
             emptyList()
         } else {
@@ -497,7 +492,7 @@ private fun beginChapterPractice(
         .toSet()
         .ifEmpty { counts.filterValues { it > 0 }.keys.toSet() }
         .ifEmpty { QuizRepository.objectiveQuestionTypes() }
-    val count = pool.count { it.type in types }
+    val count = pool.size
     if (count <= 0) {
         onBlocked("「${bank.name}」没有可练习的题型，请先在刷题偏好里检查题型设置。")
         return
