@@ -49,11 +49,9 @@ import com.yiqiu.shirohaquiz.ui.components.shirohaNoRippleClickable
 import com.yiqiu.shirohaquiz.ui.theme.ShirohaSpacing
 
 /**
- * 独立的「章节练习」页：按分组列出全部题库（章节），点一行就设为当前并直接开刷。
- *
- * 只做选择和开局，答题界面仍复用练习页那套流程：
- * setActiveBank -> startPracticeSession -> onStarted（跳回练习页）。
- * 分组默认全部收起；顶部一行操作条提供 继续 / 上一章 / 下一章。
+ * 独立的「章节练习」页：按分组列出全部题库（章节），点一行即选中该章，不直接开练。
+ * 顶部操作栏：继续 / 上一章 / 下一章 / 开始练习。
+ * 分组默认全部收起；顶部操作栏提供 继续 / 上一章 / 下一章 / 开始练习。
  */
 @Composable
 fun ChapterPracticeScreen(
@@ -84,27 +82,42 @@ fun ChapterPracticeScreen(
     val previousBank = if (currentIndex > 0) siblings[currentIndex - 1] else null
     val nextBank = if (currentIndex >= 0 && currentIndex < siblings.size - 1) siblings[currentIndex + 1] else null
 
-    val normalizedQuery = query.trim()
-    val filteredBanks = allBanks.filter { bank ->
-        normalizedQuery.isBlank() ||
-            bank.name.contains(normalizedQuery, ignoreCase = true) ||
-            bank.groupName.contains(normalizedQuery, ignoreCase = true)
+    // 当前选中的章（用于高亮与导航），初始为当前题库，上一章/下一章只改它，不直接开练
+    var selectedBank by remember { mutableStateOf(currentBank) }
+
+    fun navigateToBank(bank: QuizBank?) {
+        bank?.let { selectedBank = it }
     }
-    val groupedBanks = filteredBanks
-        .groupBy { it.groupName.ifBlank { DEFAULT_BANK_GROUP_NAME } }
-        .entries
-        .sortedBy { entry -> if (entry.key == DEFAULT_BANK_GROUP_NAME) "" else entry.key }
 
     fun startBank(bank: QuizBank?) {
         if (bank == null) return
         notice = null
         beginChapterPractice(
-            context = context,
+            context = LocalContext.current,
             bank = bank,
             onStarted = onStarted,
             onBlocked = { message -> notice = message }
         )
     }
+
+    val normalizedQuery = query.trim()
+    val filteredBanks = QuizRepository.banks.filter { bank ->
+        normalizedQuery.isBlank() ||
+            bank.name.contains(normalizedQuery, ignoreCase = true) ||
+            bank.groupName.contains(normalizedQuery, ignoreCase = true)
+    }
+    val groupedBanks = QuizRepository.banks
+        .filter { bank ->
+            normalizedQuery.isBlank() ||
+                bank.name.contains(normalizedQuery, ignoreCase = true) ||
+                bank.groupName.contains(normalizedQuery, ignoreCase = true)
+        }
+        .groupBy { it.groupName.ifBlank { DEFAULT_BANK_GROUP_NAME } }
+        .entries
+        .sortedBy { entry -> if (entry.key == DEFAULT_BANK_GROUP_NAME) "" else entry.key }
+
+    val allBanks = QuizRepository.banks
+    val scopeSummary = QuizRepository.currentPracticeScopeSummary()
 
     Column(
         modifier = Modifier
@@ -115,54 +128,94 @@ fun ChapterPracticeScreen(
         ShirohaHeader(
             kicker = "Chapters",
             title = "章节练习",
-            subtitle = "点一行即设为当前并开练；分组与书目默认收起，点开书名可看章节。"
+            subtitle = "点章节选中，上一章/下一章切换，点开始练习开练。"
         )
+
+        // 顶部操作栏：继续当前 / 上一章 / 下一章 / 开始练习
+        val currentGroupName = QuizRepository.activeBank()?.groupName?.ifBlank { DEFAULT_BANK_GROUP_NAME }
+        val activeSiblings = if (currentGroupName == null) {
+            emptyList()
+        } else {
+            QuizRepository.banks
+                .filter { it.groupName.ifBlank { DEFAULT_BANK_GROUP_NAME } == currentGroupName }
+                .sortedWith(chapterDisplayOrder)
+        }
+        val activeIndex = activeSiblings.indexOfFirst { it.id == QuizRepository.activeBank()?.id }
+        val previousActive = if (activeIndex > 0) activeSiblings[activeIndex - 1] else null
+        val nextActive = if (activeIndex >= 0 && activeIndex < activeSiblings.size - 1) activeSiblings[activeIndex + 1] else null
+
+        // 选中的章在同组内的前后（用于上一章/下一章导航）
+        val selectedGroupName = selectedBank?.groupName?.ifBlank { DEFAULT_BANK_GROUP_NAME }
+        val selectedSiblings = if (selectedGroupName == null) {
+            emptyList()
+        } else {
+            QuizRepository.banks
+                .filter { it.groupName.ifBlank { DEFAULT_BANK_GROUP_NAME } == selectedGroupName }
+                .sortedWith(chapterDisplayOrder)
+        }
+        val selectedIndex = selectedSiblings.indexOfFirst { it.id == selectedBank?.id }
+        val previousSelected = if (selectedIndex > 0) selectedSiblings[selectedIndex - 1] else null
+        val nextSelected = if (selectedIndex >= 0 && selectedIndex < selectedSiblings.size - 1) selectedSiblings[selectedIndex + 1] else null
 
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(ShirohaSpacing.Sm),
             verticalAlignment = Alignment.CenterVertically
         ) {
+            // 继续当前正在练的章
             ActionPillButton(
                 icon = Icons.Rounded.PlayArrow,
                 text = "继续",
                 primary = true,
                 fillWidthContent = true,
-                enabled = currentBank != null,
+                enabled = QuizRepository.activeBank() != null,
                 modifier = Modifier.weight(1f).height(44.dp),
-                onClick = { startBank(currentBank) }
+                onClick = { startBank(QuizRepository.activeBank()) }
             )
+            // 选中的章的上一章
             ActionPillButton(
                 icon = Icons.Rounded.ChevronLeft,
                 text = "上一章",
                 primary = false,
                 fillWidthContent = true,
-                enabled = previousBank != null,
+                enabled = previousSelected != null,
                 modifier = Modifier.weight(1f).height(44.dp),
-                onClick = { startBank(previousBank) }
+                onClick = { navigateToBank(previousSelected) }
             )
+            // 选中的章的下一章
             ActionPillButton(
                 icon = Icons.Rounded.ChevronRight,
                 text = "下一章",
                 primary = false,
                 fillWidthContent = true,
-                enabled = nextBank != null,
+                enabled = nextSelected != null,
                 modifier = Modifier.weight(1f).height(44.dp),
-                onClick = { startBank(nextBank) }
+                onClick = { navigateToBank(nextSelected) }
+            )
+            // 开始练习：对当前选中的章开练
+            ActionPillButton(
+                icon = Icons.Rounded.PlayArrow,
+                text = "开始练习",
+                primary = true,
+                fillWidthContent = true,
+                enabled = selectedBank != null,
+                modifier = Modifier.weight(1f).height(44.dp),
+                onClick = { startBank(selectedBank) }
             )
         }
 
         GlassCard(contentPadding = 14.dp) {
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                val displayName = selectedBank?.name ?: QuizRepository.activeBank()?.name ?: "未选择"
                 Text(
-                    text = "当前题库：${currentBank?.name ?: "未选择"}",
+                    text = "当前选中：$displayName",
                     style = MaterialTheme.typography.bodyMedium,
                     fontWeight = FontWeight.SemiBold,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
                 Text(
-                    text = "练习范围：$scopeSummary · 共 ${allBanks.size} 个题库",
+                    text = "练习范围：$scopeSummary · 共 ${QuizRepository.banks.size} 个题库",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
@@ -200,7 +253,7 @@ fun ChapterPracticeScreen(
         }
 
         when {
-            allBanks.isEmpty() -> {
+            QuizRepository.banks.isEmpty() -> {
                 GlassCard {
                     Text(
                         text = "还没有任何题库。先在「导入」页导入题库，再回来按章节刷题。",
@@ -210,7 +263,7 @@ fun ChapterPracticeScreen(
                 }
             }
 
-            groupedBanks.isEmpty() -> {
+            QuizRepository.banks.filter { it.name.contains(query.trim(), ignoreCase = true) || it.groupName.contains(query.trim(), ignoreCase = true) }.isEmpty() -> {
                 GlassCard {
                     Text(
                         text = "没有匹配「$normalizedQuery」的章节。",
@@ -224,15 +277,14 @@ fun ChapterPracticeScreen(
                 groupedBanks.forEach { entry ->
                     val groupName = entry.key
                     val banksInGroup = entry.value.sortedWith(chapterDisplayOrder)
-                    // 搜索时强制展开，否则命中的章节会被折叠藏起来。
-                    val isExpanded = normalizedQuery.isNotBlank() || groupName in expandedGroups
+                    val isExpanded = query.trim().isNotBlank() || groupName in expandedGroups
                     val totalQuestions = banksInGroup.sumOf { QuizRepository.bankQuestionCount(it.id) }
 
                     GlassCard(contentPadding = 16.dp) {
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .shirohaNoRippleClickable(enabled = normalizedQuery.isBlank()) {
+                                .shirohaNoRippleClickable(enabled = query.trim().isBlank()) {
                                     expandedGroups = if (isExpanded) {
                                         expandedGroups - groupName
                                     } else {
@@ -266,10 +318,9 @@ fun ChapterPracticeScreen(
 
                         if (isExpanded) {
                             Spacer(Modifier.height(ShirohaSpacing.Sm))
-                            // 二级：按「书」分组；书默认收起，搜索时强制展开。
                             bookSections(banksInGroup).forEach { section ->
                                 val bookKey = "$groupName|${section.bookName}"
-                                val bookExpanded = normalizedQuery.isNotBlank() || bookKey in expandedBooks
+                                val bookExpanded = query.trim().isNotBlank() || bookKey in expandedBooks
                                 if (section.bookName.isNotBlank()) {
                                     ShirohaBookSectionHeader(
                                         bookName = section.bookName,
@@ -288,8 +339,9 @@ fun ChapterPracticeScreen(
                                     section.banks.forEach { bank ->
                                         ChapterRow(
                                             bank = bank,
-                                            isCurrent = bank.id == currentBank?.id,
-                                            onClick = { startBank(bank) }
+                                            isCurrent = bank.id == selectedBank?.id,
+                                            isActive = bank.id == QuizRepository.activeBank()?.id,
+                                            onClick = { navigateToBank(bank) }
                                         )
                                     }
                                 }
@@ -317,12 +369,14 @@ fun ChapterPracticeScreen(
 }
 
 /**
- * 一行 = 一个章节。只留名字 + 题数，整行点击即设为当前并直接开练。
+ * 一行 = 一个章节。显示名字 + 题数，当前选中高亮，正在练的章有标记。
+ * 点击 = 选中该章，不直接开练。
  */
 @Composable
 private fun ChapterRow(
     bank: QuizBank,
     isCurrent: Boolean,
+    isActive: Boolean,
     onClick: () -> Unit
 ) {
     Row(
@@ -345,11 +399,21 @@ private fun ChapterRow(
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )
-            Text(
-                text = "${QuizRepository.bankQuestionCount(bank.id)} 题",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
+            Row(horizontalArrangement = Arrangement.spacedBy(ShirohaSpacing.Xs)) {
+                Text(
+                    text = "${QuizRepository.bankQuestionCount(bank.id)} 题",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                if (isActive) {
+                    Text(
+                        text = "练习中",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.primary,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
+            }
         }
     }
 }
@@ -383,7 +447,7 @@ fun ChapterPracticeEntryCard(
                     fontWeight = FontWeight.SemiBold
                 )
                 Text(
-                    text = "一眼看全 ${QuizRepository.banks.size} 个题库，点一下就开练",
+                    text = "一眼看全 ${QuizRepository.banks.size} 个题库，点一下选中章节",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
@@ -401,8 +465,7 @@ fun ChapterPracticeEntryCard(
 }
 
 /**
- * 点一行 = 设为当前题库 + 立即用现有练习流程开局。
- * 不新增答题界面，全部复用 QuizRepository 的公开方法。
+ * 点一行 = 选中该章，不直接开练。开始练习由顶部操作栏的按钮触发。
  */
 private fun beginChapterPractice(
     context: Context,
@@ -440,12 +503,12 @@ private fun beginChapterPractice(
         return
     }
     val started = QuizRepository.startPracticeSession(
-        questionCount = count,
-        allowedTypes = types,
+        questionCount = pool.size,
+        allowedTypes = QuizRepository.objectiveQuestionTypes(),
         sourceLabel = bank.name,
         randomize = true,
         practiceMode = QuizRepository.PRACTICE_MODE_INSTANT,
-        batchGroupSize = count
+        batchGroupSize = pool.size
     )
     if (started) {
         onStarted()
