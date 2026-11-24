@@ -1,6 +1,7 @@
 package com.yiqiu.shirohaquiz.state.exam
 
-import com.yiqiu.shirohaquiz.state.Question
+import com.yiqiu.shirohaquiz.importer.model.Question
+import com.yiqiu.shirohaquiz.importer.model.QuestionType
 import com.yiqiu.shirohaquiz.state.ExamSummary
 import com.yiqiu.shirohaquiz.state.StudyQuestionResult
 import com.yiqiu.shirohaquiz.state.QuizRepository
@@ -17,7 +18,7 @@ class ExamRepositoryImpl : ExamRepository {
 
     override fun startExam(questionCount: Int, durationMinutes: Int): Boolean = QuizRepository.startExam(questionCount, durationMinutes)
     override fun startExam(questionCount: Int, durationMinutes: Int, bankIds: List<String>): Boolean = QuizRepository.startExam(questionCount, durationMinutes, bankIds)
-    override fun startExamByTypeCounts(typeCounts: Map<com.yiqiu.shirohaquiz.state.QuestionType, Int>, durationMinutes: Int, bankIds: List<String>): Boolean = QuizRepository.startExamByTypeCounts(typeCounts, durationMinutes, bankIds)
+    override fun startExamByTypeCounts(typeCounts: Map<QuestionType, Int>, durationMinutes: Int, bankIds: List<String>): Boolean = QuizRepository.startExamByTypeCounts(typeCounts, durationMinutes, bankIds)
     override fun resetExam() = QuizRepository.resetExam()
     override fun currentExamQuestion(): Question? = QuizRepository.currentExamQuestion()
     override fun nextExamQuestion() = QuizRepository.nextExamQuestion()

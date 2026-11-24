@@ -1,13 +1,13 @@
 package com.yiqiu.shirohaquiz.state.practice
 
 import android.content.Context
-import com.yiqiu.shirohaquiz.state.Question
-import com.yiqiu.shirohaquiz.state.QuestionType
+import com.yiqiu.shirohaquiz.importer.model.Question
+import com.yiqiu.shirohaquiz.importer.model.QuestionType
+import com.yiqiu.shirohaquiz.importer.model.InkModels
 import com.yiqiu.shirohaquiz.state.QuizBank
 import com.yiqiu.shirohaquiz.state.QuestionCheckResult
 import com.yiqiu.shirohaquiz.state.StudyQuestionResult
 import com.yiqiu.shirohaquiz.state.PracticeSessionSnapshot
-import com.yiqiu.shirohaquiz.importer.model.InkModels
 import com.yiqiu.shirohaquiz.state.QuizRepository
 import org.json.JSONObject
 import com.yiqiu.shirohaquiz.util.Triple
@@ -48,12 +48,13 @@ class PracticeRepositoryImpl : PracticeRepository {
     override fun startPracticeSession(
         scopeType: String, scopeValue: String, sourceLabel: String, mode: String,
         questionCount: Int, shuffleSeed: Long, bankIds: List<String>,
-        sequentialStartIndex: Int?, usesRecite: Boolean
+        sequentialStartIndex: Int? = null, usesRecite: Boolean = false
     ): Boolean = QuizRepository.startPracticeSession(scopeType, scopeValue, sourceLabel, mode, questionCount, shuffleSeed, bankIds, sequentialStartIndex, usesRecite)
-
     override fun startWrongBookPractice(scopeLabel: String, questions: List<Question>, scopeType: String, scopeValue: String): Boolean = QuizRepository.startWrongBookPractice(scopeLabel, questions, scopeType, scopeValue)
     override fun startTodayWrongBookReview(): Boolean = QuizRepository.startTodayWrongBookReview()
-    override fun startSequentialPracticeSession(bankIds: List<String>, startIndex: Int, questionCount: Int, usesRecite: Boolean): Boolean = QuizRepository.startSequentialPracticeSession(bankIds, startIndex, questionCount, usesRecite)
+    override fun startSequentialPracticeSession(
+        bankIds: List<String>, startIndex: Int, questionCount: Int, usesRecite: Boolean
+    ): Boolean = QuizRepository.startSequentialPracticeSession(bankIds, startIndex, questionCount, usesRecite)
     override fun resetSequentialPracticeProgress() = QuizRepository.resetSequentialPracticeProgress()
     override fun nextQuestion() = QuizRepository.nextQuestion()
     override fun previousQuestion() = QuizRepository.previousQuestion()
@@ -80,7 +81,7 @@ class PracticeRepositoryImpl : PracticeRepository {
     override fun persistPracticeSessionSnapshot(sync: Boolean = false) = QuizRepository.persistPracticeSessionSnapshot(sync)
     override fun discardSavedPracticeSession() = QuizRepository.discardSavedPracticeSession()
     override fun hasSavedPracticeSession(): Boolean = QuizRepository.hasSavedPracticeSession()
-    override fun savedPracticeSessionSummary(): Triple<Int, Int, Int>? = QuizRepository.savedPracticeSessionSummary()
+    override fun savedPracticeSessionSummary(): com.yiqiu.shirohaquiz.util.Triple<Int, Int, Int>? = QuizRepository.savedPracticeSessionSummary()
     override fun resumeSavedPracticeSession(): Boolean = QuizRepository.resumeSavedPracticeSession()
     override fun abandonSavedPracticeSession() = QuizRepository.abandonSavedPracticeSession()
 

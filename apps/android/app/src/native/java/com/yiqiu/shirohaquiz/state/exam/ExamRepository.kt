@@ -1,6 +1,7 @@
 package com.yiqiu.shirohaquiz.state.exam
 
-import com.yiqiu.shirohaquiz.state.Question
+import com.yiqiu.shirohaquiz.importer.model.Question
+import com.yiqiu.shirohaquiz.importer.model.QuestionType
 import com.yiqiu.shirohaquiz.state.ExamSummary
 
 /** 考试模式仓储：考试会话、答题、计时、评分。 */
@@ -16,7 +17,7 @@ interface ExamRepository {
 
     fun startExam(questionCount: Int, durationMinutes: Int): Boolean
     fun startExam(questionCount: Int, durationMinutes: Int, bankIds: List<String>): Boolean
-    fun startExamByTypeCounts(typeCounts: Map<com.yiqiu.shirohaquiz.state.QuestionType, Int>, durationMinutes: Int, bankIds: List<String>): Boolean
+    fun startExamByTypeCounts(typeCounts: Map<QuestionType, Int>, durationMinutes: Int, bankIds: List<String>): Boolean
     fun resetExam()
     fun currentExamQuestion(): Question?
     fun nextExamQuestion()

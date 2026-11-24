@@ -1,8 +1,8 @@
 package com.yiqiu.shirohaquiz.state.practice
 
 import android.content.Context
-import com.yiqiu.shirohaquiz.state.Question
-import com.yiqiu.shirohaquiz.state.QuestionType
+import com.yiqiu.shirohaquiz.importer.model.Question
+import com.yiqiu.shirohaquiz.importer.model.QuestionType
 import com.yiqiu.shirohaquiz.state.QuizBank
 import com.yiqiu.shirohaquiz.state.QuestionCheckResult
 import com.yiqiu.shirohaquiz.state.StudyQuestionResult

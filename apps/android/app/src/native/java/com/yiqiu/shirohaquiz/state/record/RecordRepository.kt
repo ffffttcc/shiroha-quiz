@@ -1,7 +1,7 @@
 package com.yiqiu.shirohaquiz.state.record
 
 import android.content.Context
-import com.yiqiu.shirohaquiz.state.Question
+import com.yiqiu.shirohaquiz.importer.model.Question
 import com.yiqiu.shirohaquiz.state.WrongQuestionEntry
 import com.yiqiu.shirohaquiz.state.FavoriteQuestionEntry
 import com.yiqiu.shirohaquiz.state.SlashedQuestionEntry

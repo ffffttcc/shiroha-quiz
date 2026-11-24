@@ -1,6 +1,6 @@
 package com.yiqiu.shirohaquiz.state.stats
 
-import com.yiqiu.shirohaquiz.state.Question
+import com.yiqiu.shirohaquiz.importer.model.Question
 import com.yiqiu.shirohaquiz.state.QuizBank
 import com.yiqiu.shirohaquiz.state.StudyRecord
 import com.yiqiu.shirohaquiz.state.RecordProgress

@@ -1,8 +1,9 @@
 package com.yiqiu.shirohaquiz.state.bank
 
 import com.yiqiu.shirohaquiz.state.QuizBank
-import com.yiqiu.shirohaquiz.state.Question
-import com.yiqiu.shirohaquiz.importer.model.JsonImportPreview
+import com.yiqiu.shirohaquiz.importer.model.Question
+import com.yiqiu.shirohaquiz.importer.model.QuestionType
+import com.yiqiu.shirohaquiz.state.JsonImportPreview
 import com.yiqiu.shirohaquiz.state.BackupContentPreview
 
 /** 题库仓储接口：仅对外暴露题库增删改查、导入导出、统计。不含练习/记录逻辑。 */
@@ -13,7 +14,7 @@ interface BankRepository {
     fun activeBank(): QuizBank?
     fun isBankPendingLoad(bankId: String): Boolean
     fun bankQuestionCount(bankId: String): Int
-    fun bankTypeCounts(bankId: String): Map<com.yiqiu.shirohaquiz.state.QuestionType, Int>
+    fun bankTypeCounts(bankId: String): Map<QuestionType, Int>
     fun indexedQuestionCount(bankId: String): Int
     fun pendingBankContentIds(): List<String>
     fun ensureAllBanksLoaded(): Set<String>
