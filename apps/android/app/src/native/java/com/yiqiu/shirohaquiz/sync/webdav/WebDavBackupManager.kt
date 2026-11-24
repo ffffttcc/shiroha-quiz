@@ -87,7 +87,9 @@ class WebDavBackupManager private constructor(
      * 跑一次增量同步。全部网络与写盘都在 IO；失败不写本地、不更新 last_sync_at。
      * 状态由 SyncEngine 在成功后落盘，UI 读 SyncStateStore 展示。
      */
-    suspend fun syncNow(): com.yiqiu.shirohaquiz.sync.sync.SyncEngine.Report = withContext(Dispatchers.IO) {
+    suspend fun syncNow(
+        progressOnly: Boolean = false
+    ): com.yiqiu.shirohaquiz.sync.sync.SyncEngine.Report = withContext(Dispatchers.IO) {
         val client = clientForSavedSettings()
         val store = com.yiqiu.shirohaquiz.sync.sync.SyncStateStore(appContext)
         // 钥匙只派生一次（PBKDF2 21 万轮），迁移判断与引擎共用同一份。
@@ -165,7 +167,7 @@ class WebDavBackupManager private constructor(
                 store.setBackupKeyMigrationDone(true)
                 if (backupMigrated > 0) migrationNote += "（完整备份迁移 $backupMigrated 份）"
             }
-            engine.run().let { report ->
+            engine.run(progressOnly).let { report ->
                 recordSyncFailure(store, report)
                 val skippedCount = loadFailures.size + unloadedViolations.size
                 val base = if (skippedCount == 0) report else report.copy(

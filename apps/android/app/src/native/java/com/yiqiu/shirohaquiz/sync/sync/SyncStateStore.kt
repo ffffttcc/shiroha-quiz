@@ -36,6 +36,11 @@ class SyncStateStore(context: Context) {
     fun setIntervalMinutes(minutes: Int) =
         preferences.edit().putInt(KEY_INTERVAL_MINUTES, minutes.takeIf { it in SUPPORTED_INTERVALS } ?: DEFAULT_INTERVAL_MINUTES).apply()
 
+    /** 刷题进度自动同步：与整体同步开关分开，关掉后答题不会触发任何网络请求。 */
+    fun practiceAutoSync(): Boolean = preferences.getBoolean(KEY_PRACTICE_AUTO_SYNC, true)
+    fun setPracticeAutoSync(enabled: Boolean) =
+        preferences.edit().putBoolean(KEY_PRACTICE_AUTO_SYNC, enabled).apply()
+
     fun wifiOnly(): Boolean = preferences.getBoolean(KEY_WIFI_ONLY, true)
     fun setWifiOnly(enabled: Boolean) = preferences.edit().putBoolean(KEY_WIFI_ONLY, enabled).apply()
 
@@ -146,6 +151,8 @@ class SyncStateStore(context: Context) {
         const val KEY_ENABLED = "sync_enabled"
         const val KEY_INTERVAL_MINUTES = "sync_interval_minutes"
         const val KEY_WIFI_ONLY = "sync_wifi_only"
+        /** 刷题进度自动同步（默认开）：与整体同步开关独立。 */
+        const val KEY_PRACTICE_AUTO_SYNC = "practice_auto_sync"
         const val KEY_LAST_SYNC_AT = "last_sync_at"
         const val KEY_LAST_SYNC_RESULT = "last_sync_result"
         const val KEY_LAST_ERROR = "last_error"

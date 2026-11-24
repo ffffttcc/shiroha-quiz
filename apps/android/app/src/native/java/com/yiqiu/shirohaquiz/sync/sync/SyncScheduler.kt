@@ -12,6 +12,7 @@ import androidx.work.NetworkType
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
+import androidx.work.workDataOf
 import androidx.work.WorkerParameters
 import com.yiqiu.shirohaquiz.state.QuizRepository
 import com.yiqiu.shirohaquiz.sync.webdav.WebDavBackupManager
@@ -29,13 +30,20 @@ import java.util.concurrent.TimeUnit
 object SyncScheduler {
     const val UNIQUE_WORK = "shiroha_sync_engine"
     const val QUICK_WORK = "shiroha_sync_quick"
+    const val KEY_PROGRESS_ONLY = "progressOnly"
 
     /**
      * 答题后的静默快推：5 秒防抖，连着答几题只推最后一次。
      * 未开启同步 / 周期为 0 时直接跳过，不产生任何网络与任务。
      */
-    fun syncSoon(context: Context, store: SyncStateStore = SyncStateStore(context)) {
+    fun syncSoon(
+        context: Context,
+        progressOnly: Boolean = false,
+        store: SyncStateStore = SyncStateStore(context)
+    ) {
         if (!store.isEnabled() || store.intervalMinutes() == 0) return
+        // 只推进度时还要过「刷题自动同步」这道独立开关：关掉就安静，不排队、不发请求。
+        if (progressOnly && !store.practiceAutoSync()) return
         val request = OneTimeWorkRequestBuilder<SyncWorker>()
             .setConstraints(
                 Constraints.Builder()
@@ -44,6 +52,7 @@ object SyncScheduler {
                     .build()
             )
             .setInitialDelay(5, TimeUnit.SECONDS)
+            .setInputData(workDataOf(KEY_PROGRESS_ONLY to progressOnly))
             .build()
         WorkManager.getInstance(context.applicationContext)
             .enqueueUniqueWork(QUICK_WORK, ExistingWorkPolicy.REPLACE, request)
@@ -84,7 +93,8 @@ class SyncWorker(context: Context, params: WorkerParameters) : CoroutineWorker(c
             WebDavBackupManager.getInstance(applicationContext)
         }
         return try {
-            val report = manager.syncNow()
+            val progressOnly = inputData.getBoolean(SyncScheduler.KEY_PROGRESS_ONLY, false)
+            val report = manager.syncNow(progressOnly = progressOnly)
             if (report.ok) return Result.success()
             // 重试有上限：连续失败达到上限就停下并留下可见错误，
             // 否则同一批对象会被反复拉取（真机表现为界面一直「正在登录」）。

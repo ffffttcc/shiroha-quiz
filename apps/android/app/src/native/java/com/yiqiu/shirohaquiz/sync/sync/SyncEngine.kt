@@ -81,16 +81,22 @@ class SyncEngine(
     /** 本轮重加密迁移的对象数（每个 run 重置）。 */
     private var migratedCount = 0
 
-    fun run(): Report = SyncWriteGate.withLock {
+    /**
+     * @param progressOnly 只推/拉刷题进度：不扫题库、不传记录片，manifest 里的题库清单原样保留。
+     *   答题后的静默同步走这条，避免每答一题都全量扫一遍。
+     */
+    fun run(progressOnly: Boolean = false): Report = SyncWriteGate.withLock {
         migratedCount = 0
-        runLocked()
+        runLocked(progressOnly)
     }
 
-    private fun runLocked(): Report {
+    private fun runLocked(progressOnly: Boolean = false): Report {
         val at = clockMillis()
+        val fetched = runCatching { fetchManifest() }.getOrNull()
+        if (progressOnly) return runProgressOnly(at, fetched)
         return try {
             val baseline = state.bankMeta()
-            val remoteManifest = fetchManifest() ?: SyncManifest(state.deviceId(), at, emptyMap())
+            val remoteManifest = fetched ?: SyncManifest(state.deviceId(), at, emptyMap())
             val forceUpload = state.forceUploadLocal()
             // 本轮墓碑必须在**做计划之前**算出来。否则本轮刚删掉的库会先被 DOWNLOAD 回来，
             // 删除意图被自己抹掉：墓碑永远写不出去，云端那份每次同步又把它复活（真机复现过）。
@@ -245,6 +251,43 @@ class SyncEngine(
             }
         } catch (error: Exception) {
             Report(false, 0, 0, 0, error.message ?: "同步失败，本地数据未改动。")
+        }
+    }
+
+    /**
+     * 轻量通道：只合练习进度。题库清单与记录片**原样沿用远端**，绝不用本地状态重算，
+     * 否则会出现「manifest 说题库变了、blob 却没传」的坏状态。
+     */
+    private fun runProgressOnly(at: Long, remote: SyncManifest?): Report {
+        if (remote == null) return Report(true, 0, 0, 0, "云端还没有清单，跳过进度同步")
+        return try {
+            val remoteProgress = runCatching {
+                org.json.JSONObject(remote.practiceProgressJson.ifBlank { "{}" })
+            }.getOrDefault(org.json.JSONObject())
+            runCatching { QuizRepository.applyRemotePracticeProgress(remoteProgress) }
+            val merged = mergePracticeProgress(
+                local = QuizRepository.exportPortablePracticeSnapshots(),
+                remote = remoteProgress
+            )
+            val mergedJson = if (merged.length() == 0) "" else merged.toString()
+            val changed = mergedJson != remote.practiceProgressJson
+            if (changed) {
+                val nextEpoch = maxOf(state.epoch(), remote.epoch) + 1L
+                val next = remote.copy(
+                    deviceId = state.deviceId(),
+                    updatedAt = at,
+                    epoch = nextEpoch,
+                    practiceProgressJson = mergedJson,
+                    version = SyncManifest.CURRENT_VERSION
+                )
+                client.putSyncObject(SyncObjects.MANIFEST, keys.encryptManifest(next))
+                state.advanceEpoch(nextEpoch)
+            }
+            state.markSynced(at, if (changed) "刷题进度已上传" else "刷题进度已是最新", state.bankMeta())
+            Report(true, 0, 0, 0, if (changed) "刷题进度已上传" else "刷题进度已是最新")
+        } catch (error: Exception) {
+            state.recordFailure("进度同步失败：${error.message}", at)
+            Report(false, 0, 0, 0, "进度同步失败：${error.message}")
         }
     }
 

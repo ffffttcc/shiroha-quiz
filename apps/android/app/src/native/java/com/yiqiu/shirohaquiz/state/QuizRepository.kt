@@ -2590,7 +2590,7 @@ object QuizRepository {
         upsertPracticeRecordSnapshot()
         persistPracticeSessionSnapshot()
         // 答完一题就静默排一次同步（5 秒防抖），让别的设备尽快看到这条作答。
-        appContext?.let { context -> runCatching { SyncScheduler.syncSoon(context) } }
+        appContext?.let { context -> runCatching { SyncScheduler.syncSoon(context, progressOnly = true) } }
 
         // AI 临时答案只用于当前练习会话判定，不写回题库，也不据此改动错题本。
         if (temporaryReferenceAnswer == null) {

@@ -26,7 +26,10 @@ import androidx.compose.material.icons.rounded.Warning
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.ui.platform.LocalContext
+import com.yiqiu.shirohaquiz.sync.sync.SyncStateStore
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -96,11 +99,15 @@ fun HomeScreen(
             modifier = homeContentModifier
                 .padding(horizontal = ShirohaSpacing.Xl, vertical = ShirohaSpacing.Sm)
         ) {
-            ShirohaHeader(
-                kicker = "Shiroha Quiz",
-                title = "首页",
-                subtitle = ""
-            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                ShirohaHeader(
+                    kicker = "Shiroha Quiz",
+                    title = "首页",
+                    subtitle = "",
+                    modifier = Modifier.weight(1f)
+                )
+                PracticeAutoSyncToggle()
+            }
 
             Spacer(Modifier.height(homeSectionGap))
 
@@ -159,6 +166,30 @@ fun HomeScreen(
                 Spacer(Modifier.height(homeSectionGap))
             }
         }
+    }
+}
+
+/** 右上角：刷题进度自动同步的开关兼状态。关掉后答题不会触发任何网络。 */
+@Composable
+private fun PracticeAutoSyncToggle() {
+    val context = LocalContext.current
+    val store = remember { SyncStateStore(context) }
+    var enabled by remember { mutableStateOf(store.practiceAutoSync()) }
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text(
+            text = "刷题同步",
+            style = MaterialTheme.typography.labelMedium,
+            color = if (enabled) MaterialTheme.colorScheme.primary
+            else MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Switch(
+            checked = enabled,
+            onCheckedChange = { value ->
+                enabled = value
+                store.setPracticeAutoSync(value)
+            },
+            modifier = Modifier.padding(start = 6.dp)
+        )
     }
 }
 
