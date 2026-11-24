@@ -10,6 +10,7 @@ import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshots.Snapshot
+import com.yiqiu.shirohaquiz.sync.sync.SyncScheduler
 import com.yiqiu.shirohaquiz.importer.model.ClozeItem
 import com.yiqiu.shirohaquiz.importer.model.ClozeSupport
 import com.yiqiu.shirohaquiz.importer.model.InkStroke
@@ -2585,6 +2586,8 @@ object QuizRepository {
         )
         upsertPracticeRecordSnapshot()
         persistPracticeSessionSnapshot()
+        // 答完一题就静默排一次同步（5 秒防抖），让别的设备尽快看到这条作答。
+        appContext?.let { context -> runCatching { SyncScheduler.syncSoon(context) } }
 
         // AI 临时答案只用于当前练习会话判定，不写回题库，也不据此改动错题本。
         if (temporaryReferenceAnswer == null) {
@@ -5043,6 +5046,62 @@ object QuizRepository {
         return runCatching { JSONObject(raw) }.getOrNull()
     }
 
+    /** 跨设备同步：把本机所有未完成场次导成精简快照（不含题目正文）。 */
+    fun exportPortablePracticeSnapshots(): JSONObject = runCatching {
+        val map = savedPracticeSessionsOrNull() ?: return@runCatching JSONObject()
+        val out = JSONObject()
+        map.keys().forEach { scope ->
+            val snap = map.optJSONObject(scope) ?: return@forEach
+            val portable = JSONObject()
+            snap.keys().forEach { key -> if (key != "questions") portable.put(key, snap.get(key)) }
+            out.put(scope, portable)
+        }
+        out
+    }.getOrDefault(JSONObject())
+
+    /**
+     * 跨设备同步：应用另一台设备的进度，只在对方更新时间更晚时覆盖。
+     * 题目正文用本机题库按 sessionKeys 重建；题库缺失或对不齐的场次跳过。
+     */
+    fun applyRemotePracticeProgress(remote: JSONObject): Boolean = runCatching {
+        if (remote.length() == 0) return@runCatching false
+        val local = savedPracticeSessionsOrNull() ?: JSONObject()
+        var changed = false
+        remote.keys().forEach { scope ->
+            val incoming = remote.optJSONObject(scope) ?: return@forEach
+            val localUpdated = local.optJSONObject(scope)?.optLong("updatedAt", 0L) ?: 0L
+            if (incoming.optLong("updatedAt", 0L) <= localUpdated) return@forEach
+            val keys = incoming.optJSONArray("sessionKeys") ?: return@forEach
+            if (keys.length() == 0) return@forEach
+            val questions = ArrayList<Question>(keys.length())
+            for (index in 0 until keys.length()) {
+                val question = findQuestionBySessionKey(keys.optString(index)) ?: return@forEach
+                questions += question
+            }
+            val rebuilt = JSONObject(incoming.toString())
+            rebuilt.put("v", PracticeSessionSnapshot.VERSION)
+            rebuilt.put("questions", questionsToJsonArray(questions))
+            local.put(scope, rebuilt)
+            changed = true
+        }
+        if (changed) {
+            val context = appContext ?: return@runCatching false
+            context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
+                .putString(KEY_PRACTICE_SESSION, local.toString())
+                .apply()
+            practiceSnapshotVersion++
+        }
+        changed
+    }.getOrDefault(false)
+
+    private fun findQuestionBySessionKey(sessionKey: String): Question? {
+        val bankId = sessionKey.substringBefore('#')
+        val questionId = sessionKey.substringAfter('#', "")
+        if (bankId.isBlank() || questionId.isBlank()) return null
+        val bank = banks.firstOrNull { it.id == bankId } ?: return null
+        return bank.questions.firstOrNull { it.id == questionId }
+    }
+
     private fun savedPracticeSessionForCurrentScope(): PracticeSessionSnapshot? = runCatching {
         PracticeSessionSnapshot.fromJson(
             savedPracticeSessionsOrNull()?.optJSONObject(currentPracticeScopeKey())
@@ -5124,7 +5183,8 @@ object QuizRepository {
             sequentialBankId = practiceSequentialBankId,
             sequentialStartIndex = practiceSequentialStartIndex,
             sequentialUsesRecite = practiceSequentialUsesReciteProgress,
-            sequentialNextIndex = practiceSequentialNextIndexAfterComplete
+            sequentialNextIndex = practiceSequentialNextIndexAfterComplete,
+            updatedAt = System.currentTimeMillis()
         )
         writeSavedPracticeSession(currentPracticeScopeKey(), snapshot, sync)
         practiceSnapshotVersion++

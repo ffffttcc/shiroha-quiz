@@ -61,6 +61,8 @@ class MainActivity : ComponentActivity() {
         QuizRepository.init(applicationContext)
         DocumentRecognitionManager.init(applicationContext)
         com.yiqiu.shirohaquiz.sync.webdav.WebDavAutoBackup.schedule(applicationContext)
+        // 打开 App 就静默拉一次（5 秒防抖），这样别的设备刚答的题和进度能立刻接上。
+        runCatching { com.yiqiu.shirohaquiz.sync.sync.SyncScheduler.syncSoon(applicationContext) }
         LauncherIconSwitcher.applyShirohaMode(applicationContext, QuizRepository.shirohaModeEnabled)
         applyStatusBarTheme(QuizRepository.darkThemeEnabled)
         setContent {

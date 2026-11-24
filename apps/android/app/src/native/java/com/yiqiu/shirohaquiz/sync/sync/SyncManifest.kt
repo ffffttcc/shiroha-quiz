@@ -147,7 +147,9 @@ data class SyncManifest(
     val epoch: Long = 0L,
     val recordShards: List<String> = emptyList(),
     val bankTombstones: List<Tombstone> = emptyList(),
-    val recordTombstones: List<Tombstone> = emptyList()
+    val recordTombstones: List<Tombstone> = emptyList(),
+    /** 跨设备练习进度：scopeKey -> 精简快照（不含题目正文）。用 JSON 字符串存，便于 data class 比较。 */
+    val practiceProgressJson: String = ""
 ) {
     companion object {
         const val CURRENT_VERSION = 2
@@ -185,6 +187,9 @@ object SyncManifestCodec {
         root.put("recordShards", shards)
         root.put("bankTombstones", tombstonesToJson(manifest.bankTombstones))
         root.put("recordTombstones", tombstonesToJson(manifest.recordTombstones))
+        if (manifest.practiceProgressJson.isNotBlank()) {
+            root.put("practiceProgress", JSONObject(manifest.practiceProgressJson))
+        }
         return root.toString().toByteArray(Charsets.UTF_8)
     }
 
@@ -270,7 +275,8 @@ object SyncManifestCodec {
             epoch = root.optLong("epoch", 0L),
             recordShards = shards,
             bankTombstones = tombstonesFromJson(root.optJSONArray("bankTombstones")),
-            recordTombstones = tombstonesFromJson(root.optJSONArray("recordTombstones"))
+            recordTombstones = tombstonesFromJson(root.optJSONArray("recordTombstones")),
+            practiceProgressJson = root.optJSONObject("practiceProgress")?.toString() ?: ""
         )
     }
 

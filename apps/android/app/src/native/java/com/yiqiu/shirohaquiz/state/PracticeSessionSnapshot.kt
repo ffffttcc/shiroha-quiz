@@ -32,7 +32,9 @@ internal data class PracticeSessionSnapshot(
     val sequentialBankId: String?,
     val sequentialStartIndex: Int?,
     val sequentialUsesRecite: Boolean,
-    val sequentialNextIndex: Int?
+    val sequentialNextIndex: Int?,
+    /** 最后一次落盘时刻：跨设备同步时以它为先后判据。 */
+    val updatedAt: Long = 0L
 ) {
     fun toJson(): JSONObject {
         val root = JSONObject()
@@ -60,7 +62,15 @@ internal data class PracticeSessionSnapshot(
         root.put("seqStart", sequentialStartIndex)
         root.put("seqRecite", sequentialUsesRecite)
         root.put("seqNext", sequentialNextIndex)
+        root.put("updatedAt", updatedAt)
         return root
+
+    /** 跨设备同步用的精简版：去掉题目正文（对方按 sessionKeys 用本地题库重建）。 */
+    fun toPortableJson(): JSONObject {
+        val root = toJson()
+        root.remove("questions")
+        return root
+    }
     }
 
     companion object {
@@ -113,7 +123,8 @@ internal data class PracticeSessionSnapshot(
                 sequentialBankId = root.optString("seqBankId").ifBlank { null },
                 sequentialStartIndex = root.optInt("seqStart", -1).takeIf { it >= 0 },
                 sequentialUsesRecite = root.optBoolean("seqRecite", false),
-                sequentialNextIndex = root.optInt("seqNext", -1).takeIf { it >= 0 }
+                sequentialNextIndex = root.optInt("seqNext", -1).takeIf { it >= 0 },
+                updatedAt = root.optLong("updatedAt", startedAt)
             )
         }
     }

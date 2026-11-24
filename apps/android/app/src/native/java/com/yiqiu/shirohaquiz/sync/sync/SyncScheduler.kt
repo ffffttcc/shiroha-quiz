@@ -7,7 +7,9 @@ import androidx.work.BackoffPolicy
 import androidx.work.Constraints
 import androidx.work.CoroutineWorker
 import androidx.work.ExistingPeriodicWorkPolicy
+import androidx.work.ExistingWorkPolicy
 import androidx.work.NetworkType
+import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
@@ -26,6 +28,26 @@ import java.util.concurrent.TimeUnit
  */
 object SyncScheduler {
     const val UNIQUE_WORK = "shiroha_sync_engine"
+    const val QUICK_WORK = "shiroha_sync_quick"
+
+    /**
+     * 答题后的静默快推：5 秒防抖，连着答几题只推最后一次。
+     * 未开启同步 / 周期为 0 时直接跳过，不产生任何网络与任务。
+     */
+    fun syncSoon(context: Context, store: SyncStateStore = SyncStateStore(context)) {
+        if (!store.isEnabled() || store.intervalMinutes() == 0) return
+        val request = OneTimeWorkRequestBuilder<SyncWorker>()
+            .setConstraints(
+                Constraints.Builder()
+                    .setRequiredNetworkType(if (store.wifiOnly()) NetworkType.UNMETERED else NetworkType.CONNECTED)
+                    .setRequiresStorageNotLow(true)
+                    .build()
+            )
+            .setInitialDelay(5, TimeUnit.SECONDS)
+            .build()
+        WorkManager.getInstance(context.applicationContext)
+            .enqueueUniqueWork(QUICK_WORK, ExistingWorkPolicy.REPLACE, request)
+    }
 
     fun schedule(context: Context, store: SyncStateStore = SyncStateStore(context)) {
         val workManager = WorkManager.getInstance(context.applicationContext)

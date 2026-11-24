@@ -37,6 +37,15 @@ class SyncManifestTest {
     }
 
     @Test
+    fun practiceProgressSurvivesRoundTrip() {
+        val progress = """{"BANK:bank_1":{"updatedAt":1700000009000,"index":2,"sessionKeys":["bank_1#q1"]}}"""
+        val manifest = sample().copy(practiceProgressJson = progress)
+        val decoded = SyncManifestCodec.fromJson(SyncManifestCodec.toJson(manifest))
+        assertEquals(progress, decoded.practiceProgressJson)
+        assertEquals(manifest, decoded)
+    }
+
+    @Test
     fun encryptedManifestRoundTrips() {
         val manifest = sample()
         val payload = SyncManifestCodec.encrypt(manifest, code)

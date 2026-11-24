@@ -2,6 +2,8 @@ package com.yiqiu.shirohaquiz.sync.sync
 
 import com.yiqiu.shirohaquiz.importer.model.Question
 import com.yiqiu.shirohaquiz.state.QuizBank
+import com.yiqiu.shirohaquiz.state.QuizRepository
+import org.json.JSONObject
 import com.yiqiu.shirohaquiz.sync.records.RecordKind
 import com.yiqiu.shirohaquiz.sync.records.RecordMerge
 import com.yiqiu.shirohaquiz.sync.records.RecordShard
@@ -161,6 +163,17 @@ class SyncEngine(
             if (recordTombstones != remoteManifest.recordTombstones) applyRemoteTombstones(recordTombstones)
             val record = syncRecordShards(remoteManifest)
 
+            // ④ 练习进度：先吸收远端更晚的进度，再把合并结果写回 manifest
+            val remoteProgress = runCatching {
+                JSONObject(remoteManifest.practiceProgressJson.ifBlank { "{}" })
+            }.getOrDefault(JSONObject())
+            runCatching { QuizRepository.applyRemotePracticeProgress(remoteProgress) }
+            val mergedProgress = mergePracticeProgress(
+                local = QuizRepository.exportPortablePracticeSnapshots(),
+                remote = remoteProgress
+            )
+            val mergedProgressJson = if (mergedProgress.length() == 0) "" else mergedProgress.toString()
+
             // ④ 上传题库 blob
             var uploaded = 0
             uploadsNeeded.forEach { entry ->
@@ -176,7 +189,8 @@ class SyncEngine(
             val changed = uploaded + downloaded + conflicts > 0 ||
                 record.uploaded + record.downloaded > 0 ||
                 bankTombstones != remoteManifest.bankTombstones ||
-                recordTombstones != remoteManifest.recordTombstones
+                recordTombstones != remoteManifest.recordTombstones ||
+                mergedProgressJson != remoteManifest.practiceProgressJson
             val nextEpoch = maxOf(state.epoch(), remoteManifest.epoch) + if (changed) 1L else 0L
 
             if (record.failure == null) {
@@ -187,7 +201,8 @@ class SyncEngine(
                     epoch = nextEpoch,
                     recordShards = record.shards,
                     bankTombstones = bankTombstones,
-                    recordTombstones = recordTombstones
+                    recordTombstones = recordTombstones,
+                    practiceProgressJson = mergedProgressJson
                 )
                 if (changed || remoteManifest.version < SyncManifest.CURRENT_VERSION) {
                     client.putSyncObject(SyncObjects.MANIFEST, keys.encryptManifest(merged))
@@ -413,7 +428,8 @@ class SyncEngine(
         epoch: Long,
         recordShards: List<String>,
         bankTombstones: List<Tombstone>,
-        recordTombstones: List<Tombstone>
+        recordTombstones: List<Tombstone>,
+        practiceProgressJson: String
     ): SyncManifest {
         val tombstoned = bankTombstones.filter { it.deleted }.map { it.targetKey }.toSet()
         val banks = mutableMapOf<String, SyncBankRecord>()
@@ -442,8 +458,28 @@ class SyncEngine(
             epoch = epoch,
             recordShards = recordShards,
             bankTombstones = bankTombstones,
-            recordTombstones = recordTombstones
+            recordTombstones = recordTombstones,
+            practiceProgressJson = practiceProgressJson
         )
+    }
+
+    /** 同一场次取更新时间更晚的一方；只有一边有就保留那一边。 */
+    private fun mergePracticeProgress(local: JSONObject, remote: JSONObject): JSONObject {
+        if (local.length() == 0 && remote.length() == 0) return JSONObject()
+        val out = JSONObject()
+        val scopes = (local.keys().asSequence().toList() + remote.keys().asSequence().toList()).distinct().sorted()
+        scopes.forEach { scope ->
+            val localEntry = local.optJSONObject(scope)
+            val remoteEntry = remote.optJSONObject(scope)
+            val chosen = when {
+                localEntry == null -> remoteEntry
+                remoteEntry == null -> localEntry
+                localEntry.optLong("updatedAt", 0L) > remoteEntry.optLong("updatedAt", 0L) -> localEntry
+                else -> remoteEntry
+            }
+            if (chosen != null) out.put(scope, chosen)
+        }
+        return out
     }
 
     private fun metaOf(manifest: SyncManifest): Map<String, SyncedBankMeta> =
