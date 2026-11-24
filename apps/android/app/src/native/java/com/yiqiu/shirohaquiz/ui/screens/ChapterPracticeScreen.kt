@@ -108,7 +108,7 @@ fun ChapterPracticeScreen(
         if (bank == null) return
         notice = null
         beginChapterPractice(
-            context = LocalContext.current,
+            context = context,
             bank = bank,
             onStarted = onStarted,
             onBlocked = { message -> notice = message }
