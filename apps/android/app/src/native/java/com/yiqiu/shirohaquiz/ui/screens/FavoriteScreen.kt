@@ -41,13 +41,14 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import com.yiqiu.shirohaquiz.ui.util.chapterDisplayOrder
 import com.yiqiu.shirohaquiz.R
 import com.yiqiu.shirohaquiz.importer.model.QuestionType
 import com.yiqiu.shirohaquiz.state.DEFAULT_BANK_GROUP_NAME
 import com.yiqiu.shirohaquiz.state.FavoriteQuestionEntry
 import com.yiqiu.shirohaquiz.state.QuizBank
 import com.yiqiu.shirohaquiz.state.QuizRepository
+import com.yiqiu.shirohaquiz.ui.components.ShirohaBankScopeItems
+import com.yiqiu.shirohaquiz.ui.components.ShirohaScopeOptionRow
 import com.yiqiu.shirohaquiz.ui.components.ActionPillButton
 import com.yiqiu.shirohaquiz.ui.components.EmptyStateIllustration
 import com.yiqiu.shirohaquiz.ui.components.GlassCard
@@ -276,10 +277,6 @@ private fun FavoriteScopeDialog(
     onDismiss: () -> Unit
 ) {
     val favoriteCountByBank = favorites.groupingBy { it.bankId }.eachCount()
-    val groupedBanks = banks
-        .groupBy { it.groupName.ifBlank { DEFAULT_BANK_GROUP_NAME } }
-        .entries
-        .sortedBy { entry -> if (entry.key == DEFAULT_BANK_GROUP_NAME) "" else entry.key }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -291,30 +288,21 @@ private fun FavoriteScopeDialog(
                     .verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                FavoriteScopeOption(
+                ShirohaScopeOptionRow(
                     title = "全部题库",
                     desc = "共 ${favorites.size} 道收藏",
                     selected = selectedScopeKey == FAVORITE_SCOPE_ALL,
                     onClick = { onSelect(FAVORITE_SCOPE_ALL) }
                 )
-                groupedBanks.forEach { entry ->
-                    Text(
-                        text = entry.key,
-                        style = MaterialTheme.typography.labelLarge,
-                        color = ShirohaColors.TextSecondary,
-                        fontWeight = FontWeight.SemiBold,
-                        modifier = Modifier.padding(top = 8.dp)
-                    )
-                    entry.value.sortedWith(chapterDisplayOrder).forEach { bank ->
-                        val key = FAVORITE_SCOPE_BANK_PREFIX + bank.id
-                        FavoriteScopeOption(
-                            title = bank.name,
-                            desc = "收藏 ${favoriteCountByBank[bank.id] ?: 0} 题 · 共 ${QuizRepository.bankQuestionCount(bank.id)} 题",
-                            selected = selectedScopeKey == key,
-                            onClick = { onSelect(key) }
-                        )
-                    }
-                }
+                ShirohaBankScopeItems(
+                    banks = banks,
+                    selectedScopeKey = selectedScopeKey,
+                    bankScopeKey = { bank -> FAVORITE_SCOPE_BANK_PREFIX + bank.id },
+                    bankDesc = { bank ->
+                        "收藏 ${favoriteCountByBank[bank.id] ?: 0} 题 · 共 ${QuizRepository.bankQuestionCount(bank.id)} 题"
+                    },
+                    onSelect = onSelect
+                )
             }
         },
         confirmButton = {
@@ -322,57 +310,6 @@ private fun FavoriteScopeDialog(
         }
     )
 }
-
-@Composable
-private fun FavoriteScopeOption(
-    title: String,
-    desc: String,
-    selected: Boolean,
-    onClick: () -> Unit
-) {
-    Surface(
-        modifier = Modifier
-            .fillMaxWidth()
-            .shirohaNoRippleClickable(onClick = onClick),
-        shape = androidx.compose.foundation.shape.RoundedCornerShape(ShirohaRadius.Md),
-        color = if (selected) ShirohaColors.BrandPrimarySoft else Color.Transparent,
-        border = BorderStroke(
-            1.dp,
-            if (selected) ShirohaColors.LineSelected else ShirohaColors.LineSoft
-        )
-    ) {
-        Row(
-            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = title,
-                    style = MaterialTheme.typography.bodyMedium,
-                    fontWeight = FontWeight.SemiBold,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-                Text(
-                    text = desc,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-            }
-            if (selected) {
-                Icon(
-                    imageVector = Icons.Rounded.Done,
-                    contentDescription = "已选择",
-                    tint = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.size(18.dp)
-                )
-            }
-        }
-    }
-}
-
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun FavoriteQuestionPreview(entry: FavoriteQuestionEntry) {

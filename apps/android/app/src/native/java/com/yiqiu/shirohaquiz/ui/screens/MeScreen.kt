@@ -72,6 +72,7 @@ import com.yiqiu.shirohaquiz.ui.components.GlassCard
 import com.yiqiu.shirohaquiz.ui.components.IllustrationHeroCard
 import com.yiqiu.shirohaquiz.ui.components.NoticeCard
 import com.yiqiu.shirohaquiz.ui.components.ShirohaDangerConfirmDialog
+import com.yiqiu.shirohaquiz.ui.components.ShirohaGroupedBankList
 import com.yiqiu.shirohaquiz.ui.components.ShirohaHeader
 import com.yiqiu.shirohaquiz.ui.theme.ShirohaColors
 import com.yiqiu.shirohaquiz.ui.theme.ShirohaDimens
@@ -419,38 +420,18 @@ private fun BankExportDialog(
                             .verticalScroll(rememberScrollState()),
                         verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        banks.forEach { bank ->
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .shirohaNoRippleClickable {
-                                        onSelectedChange(
-                                            if (bank.id in selectedBankIds) selectedBankIds - bank.id else selectedBankIds + bank.id
-                                        )
-                                    },
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Checkbox(
-                                    checked = bank.id in selectedBankIds,
-                                    onCheckedChange = { checked ->
-                                        onSelectedChange(if (checked) selectedBankIds + bank.id else selectedBankIds - bank.id)
-                                    }
-                                )
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text(
-                                        text = bank.name,
-                                        style = MaterialTheme.typography.titleSmall,
-                                        fontWeight = FontWeight.SemiBold,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
-                                    Text(
-                                        text = "${QuizRepository.bankQuestionCount(bank.id)} 题",
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        ShirohaGroupedBankList(banks = banks) { bank ->
+                            BankExportRow(
+                                name = bank.name,
+                                questionCount = QuizRepository.bankQuestionCount(bank.id),
+                                checked = bank.id in selectedBankIds,
+                                onToggle = {
+                                    onSelectedChange(
+                                        if (bank.id in selectedBankIds) selectedBankIds - bank.id
+                                        else selectedBankIds + bank.id
                                     )
                                 }
-                            }
+                            )
                         }
                     }
                 }
@@ -464,6 +445,38 @@ private fun BankExportDialog(
         }
     )
 }
+
+@Composable
+private fun BankExportRow(
+    name: String,
+    questionCount: Int,
+    checked: Boolean,
+    onToggle: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .shirohaNoRippleClickable(onClick = onToggle),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Checkbox(checked = checked, onCheckedChange = { onToggle() })
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = name,
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            Text(
+                text = "$questionCount 题",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+    }
+}
+
 
 @Composable
 private fun DataActionTile(

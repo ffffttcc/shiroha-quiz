@@ -119,6 +119,7 @@ import com.yiqiu.shirohaquiz.importer.validate.ImportValidator
 import com.yiqiu.shirohaquiz.state.DEFAULT_BANK_GROUP_NAME
 import com.yiqiu.shirohaquiz.state.QuizRepository
 import com.yiqiu.shirohaquiz.ui.components.ActionPillButton
+import com.yiqiu.shirohaquiz.ui.components.ShirohaBankScopeItems
 import com.yiqiu.shirohaquiz.ui.components.AiAnalysisFillPanel
 import com.yiqiu.shirohaquiz.R
 import com.yiqiu.shirohaquiz.ui.components.GlassCard
@@ -1762,20 +1763,15 @@ fun ImportScreen(
                                     style = MaterialTheme.typography.labelLarge,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
-                                FlowRow(
-                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                                ) {
-                                    QuizRepository.banks.forEach { bank ->
-                                        val selected = bank.id == appendTargetBank?.id
-                                        ActionPillButton(
-                                            icon = Icons.Rounded.Done,
-                                            text = bankDisplayPath(bank.groupName, bank.name),
-                                            primary = selected,
-                                            onClick = { appendTargetBankId = bank.id }
-                                        )
-                                    }
-                                }
+                                ShirohaBankScopeItems(
+                                    banks = QuizRepository.banks,
+                                    selectedScopeKey = appendTargetBank?.id.orEmpty(),
+                                    bankScopeKey = { bank -> bank.id },
+                                    bankDesc = { bank ->
+                                        "共 ${QuizRepository.bankQuestionCount(bank.id)} 题"
+                                    },
+                                    onSelect = { bankId -> appendTargetBankId = bankId }
+                                )
                                 ActionPillButton(
                                     icon = Icons.Rounded.Add,
                                     text = "追加到选中题库",
