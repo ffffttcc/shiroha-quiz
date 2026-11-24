@@ -456,6 +456,9 @@ object QuizRepository {
     private val practiceQuestionBankIds = mutableStateMapOf<String, String>()
     private var practiceQuestionSessionKeys by mutableStateOf<List<String>>(emptyList())
     private var practiceStartedAt by mutableStateOf<Long?>(null)
+
+    /** 当前这一场的开始时刻；界面用它区分「换了一场」，0 表示没在练。 */
+    val practiceSessionStartedAt: Long get() = practiceStartedAt ?: 0L
     private var practiceSessionScopeType: String? = null
     private var practiceSessionScopeName: String? = null
     private var practiceSequentialBankId: String? = null

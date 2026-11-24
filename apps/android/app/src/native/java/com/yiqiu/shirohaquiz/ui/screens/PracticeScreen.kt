@@ -146,7 +146,7 @@ fun PracticeScreen(
     LaunchedEffect(Unit) { QuizRepository.preloadPracticeScopeBanks() }
     val practiceScopeKey = QuizRepository.currentPracticeScopeKey()
     // 恢复提示条可以手动关掉；换一场（practiceStartedAt 变了）后重新出现。
-    var resumeBannerDismissed by remember(practiceScopeKey, QuizRepository.practiceStartedAt) {
+    var resumeBannerDismissed by remember(practiceScopeKey, QuizRepository.practiceSessionStartedAt) {
         mutableStateOf(false)
     }
     // 这个范围上次没做完就直接接回来：队列、题号、草稿、已答结果都不变。
