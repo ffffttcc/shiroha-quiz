@@ -55,6 +55,13 @@ import com.yiqiu.shirohaquiz.util.LauncherIconSwitcher
 import kotlinx.coroutines.delay
 
 class MainActivity : ComponentActivity() {
+    override fun onResume() {
+        super.onResume()
+        // 从别的设备回来/切回前台时拉一次进度：用户预期是「打开就是最新的」，
+        // 不该等 15 分钟周期。5 秒防抖，启动那一次会和它合并。
+        runCatching { com.yiqiu.shirohaquiz.sync.sync.SyncScheduler.syncSoon(applicationContext, progressOnly = true) }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         installSplashScreen()
         super.onCreate(savedInstanceState)

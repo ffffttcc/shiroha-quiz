@@ -67,6 +67,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import com.yiqiu.shirohaquiz.sync.sync.SyncScheduler
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateMapOf
@@ -151,6 +152,11 @@ fun PracticeScreen(
     }
     // 这个范围上次没做完就直接接回来：队列、题号、草稿、已答结果都不变。
     // revision 随远端进度落地而变：别的设备刚推的进度不必等用户退出重进才生效。
+    // 用户点进练习页时顺手拉一次进度：以前这里要等周期任务，看着就像「不自动同步」。
+    LaunchedEffect(practiceScopeKey) {
+        runCatching { SyncScheduler.syncSoon(context, progressOnly = true) }
+    }
+
     LaunchedEffect(practiceScopeKey, QuizRepository.practiceProgressRevision) {
         if (QuizRepository.practiceQuestions.isEmpty() && QuizRepository.hasSavedPracticeSession()) {
             QuizRepository.resumeSavedPracticeSession()
