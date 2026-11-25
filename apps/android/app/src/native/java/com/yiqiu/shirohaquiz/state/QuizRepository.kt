@@ -3182,6 +3182,8 @@ object QuizRepository {
         loadAllBanksBlocking()
         val incoming = runCatching { readValidatedBackup(bytes) }
             .getOrElse { return "恢复失败：${it.message ?: "备份不安全或数据损坏"}。" }
+        // 备份完整性预检：清单不符直接拒绝，绝不恢复一半
+        verifyBackupManifest(bytes)?.let { return it }
         // --- record-events 目录恢复 (最小改动：有则写入，无则静默兼容旧备份) ---
         val recordEventsDir = File(context.filesDir, "record-events")
         try {
@@ -4263,6 +4265,59 @@ object QuizRepository {
         val file: File
     )
 
+    /** 计算字节的 SHA-256（十六进制小写），仅用于备份清单校验。 */
+    private fun fileSha256(bytes: ByteArray): String {
+        val digest = java.security.MessageDigest.getInstance("SHA-256").digest(bytes)
+        val sb = StringBuilder(digest.size * 2)
+        digest.forEach { b -> sb.append(String.format("%02x", b)) }
+        return sb.toString()
+    }
+
+    /**
+     * 备份完整性预检：包内带 backup-files-manifest.json 时逐条校验 size 与 sha256。
+     * 返回 null 表示通过；返回字符串即失败原因（调用方直接回给用户，不做任何恢复动作）。
+     * 旧备份没有清单时返回 null，保持宽松兼容。
+     */
+    private fun verifyBackupManifest(bytes: ByteArray): String? {
+        var manifestText: String? = null
+        ZipInputStream(bytes.inputStream()).use { zip ->
+            while (true) {
+                val entry = zip.nextEntry ?: break
+                if (!entry.isDirectory && entry.name == "backup-files-manifest.json") {
+                    manifestText = zip.readBytes().toString(Charsets.UTF_8)
+                }
+                zip.closeEntry()
+            }
+        }
+        val text = manifestText ?: return null
+        val files = runCatching { JSONObject(text).optJSONArray("files") }.getOrNull() ?: return null
+        val expected = HashMap<String, Pair<Long, String>>()
+        for (i in 0 until files.length()) {
+            val o = files.optJSONObject(i) ?: continue
+            val path = o.optString("path", "")
+            if (path.isEmpty()) continue
+            expected[path] = o.optLong("size", -1L) to o.optString("sha256", "")
+        }
+        if (expected.isEmpty()) return null
+        ZipInputStream(bytes.inputStream()).use { zip ->
+            while (true) {
+                val entry = zip.nextEntry ?: break
+                val exp = expected[entry.name]
+                if (!entry.isDirectory && exp != null) {
+                    val data = zip.readBytes()
+                    if (data.size.toLong() != exp.first) {
+                        return "恢复失败：备份文件 ${entry.name} 大小不符（期望 ${exp.first}，实际 ${data.size}）"
+                    }
+                    if (exp.second.isNotEmpty() && fileSha256(data) != exp.second) {
+                        return "恢复失败：备份文件 ${entry.name} 校验不通过（sha256 不符）"
+                    }
+                }
+                zip.closeEntry()
+            }
+        }
+        return null
+    }
+
     private fun buildBackupZip(
         kind: String,
         selectedBanks: List<QuizBank>,
@@ -4324,13 +4379,36 @@ object QuizRepository {
                     val f = File(recordDir, name)
                     if (f.exists() && f.isFile) allowedNames.add(name)
                 }
-                // 写入 zip
+                // 写入 zip，同时记录 size/sha256，供清单与自检使用
+                val manifestEntries = ArrayList<JSONObject>()
+                var writtenCount = 0
                 allowedNames.sorted().forEach { name ->
                     val file = File(recordDir, name)
-                    zip.putNextEntry(ZipEntry("record-events/$name"))
-                    file.inputStream().use { input -> input.copyTo(zip) }
+                    if (!file.isFile) return@forEach
+                    val raw = file.readBytes()
+                    val entryName = "record-events/$name"
+                    zip.putNextEntry(ZipEntry(entryName))
+                    zip.write(raw)
                     zip.closeEntry()
+                    writtenCount++
+                    manifestEntries.add(JSONObject().apply {
+                        put("path", entryName)
+                        put("size", raw.size.toLong())
+                        put("sha256", fileSha256(raw))
+                    })
                 }
+                // 自检：清单里要求的文件必须全部写进 zip，否则绝不返回不完整的包
+                check(writtenCount == allowedNames.size) {
+                    "备份自检失败：应打包 ${allowedNames.size} 个文件，实际写入 $writtenCount 个"
+                }
+                val filesManifest = JSONObject().apply {
+                    put("version", 1)
+                    put("createdAt", System.currentTimeMillis().toString())
+                    put("files", org.json.JSONArray().also { arr -> manifestEntries.forEach { entry -> arr.put(entry) } })
+                }
+                zip.putNextEntry(ZipEntry("backup-files-manifest.json"))
+                zip.write(filesManifest.toString().toByteArray(Charsets.UTF_8))
+                zip.closeEntry()
             }
         }
         return output.toByteArray()
