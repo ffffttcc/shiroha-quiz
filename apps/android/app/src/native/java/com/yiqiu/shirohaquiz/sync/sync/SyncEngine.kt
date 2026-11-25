@@ -317,6 +317,8 @@ class SyncEngine(
             state.recordFailure("进度同步失败：${error.message}；记录类未同步", at)
             Report(false, 0, 0, 0, "进度同步失败：${error.message}；记录类未同步")
         }
+    }
+
     /**
      * 判定是否有待上传的记录片/tombstone。
      * 两个条件任一成立即返回 true：
