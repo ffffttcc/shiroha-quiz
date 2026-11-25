@@ -1,0 +1,32 @@
+name: chem-ocr
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - chem-ocr/**
+
+jobs:
+  structure-recognition:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.10
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.10"
+
+      - name: Install dependencies
+        run: |
+          pip install molscribe rdkit
+
+      - name: Run OCR pipeline
+        run: python chem-ocr/run_ocr.py
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: chem-ocr-result
+          path: chem-ocr/out/result.json
