@@ -5466,7 +5466,7 @@ object QuizRepository {
         QuestionType.SHORT to 3
     )
 
-    private inline fun <T> sortByTypeRank(items: List<T>, typeOf: (T) -> QuestionType): List<T> =
+    private fun <T> sortByTypeRank(items: List<T>, typeOf: (T) -> QuestionType): List<T> =
         items.sortedBy { QUESTION_TYPE_RANK[typeOf(it)] ?: 9 }
 
     fun practiceAnsweredCount(): Int = practiceSessionResults.size
