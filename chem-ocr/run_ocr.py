@@ -10,6 +10,7 @@ import time
 import json
 import os
 import sys
+import traceback
 from pathlib import Path
 
 
@@ -21,7 +22,10 @@ def predict_smiles(image_path):
     and duration. If prediction fails, confidence is None and other fields
     contain reasonable fallbacks.
     """
-    from rdkit import Chem
+    import torch
+
+    from huggingface_hub import hf_hub_download
+    from molscribe import MolScribe
 
     start_time = time.time()
     file_name = Path(image_path).name
@@ -37,56 +41,41 @@ def predict_smiles(image_path):
     }
 
     try:
-        # molscribe-based structure prediction
-        try:
-            from molscribe import predict as molscribe_predict
-            predictions = molscribe_predict(image_path)
-            if predictions and len(predictions) > 0:
-                top = predictions[0]
-                smiles = getattr(top, 'smiles', None) or getattr(top, 'smiles_string', None)
-                confidence = getattr(top, 'score', None)
-                if confidence is None:
-                    confidence = getattr(top, 'probability', None)
-            else:
-                smiles = None
-                confidence = None
-        except Exception:
-            smiles = None
-            confidence = None
+        # --- explicit model weight download ---
+        print(f"[START] Downloading MolScribe checkpoint for {file_name}", flush=True)
+        ckpt_path = hf_hub_download('yujieq/MolScribe', 'swin_base_char_aux_1m.pth')
+        print(f"[CHECKPOINT] Path: {ckpt_path}", flush=True)
 
-        # rdkit-based formula calculation and canonical SMILES
-        if smiles is not None:
-            try:
-                mol = Chem.MolFromSmiles(smiles)
-                if mol is not None:
-                    formula = Chem.rdMolDescriptors.CalcMolFormula(mol)
-                    canonical_smiles = Chem.MolToSmiles(mol)
-                else:
-                    # Invalid SMILES from molscribe; try to infer from image
-                    formula = None
-                    canonical_smiles = None
-            except Exception:
-                formula = None
-                canonical_smiles = None
-        else:
-            formula = None
-            canonical_smiles = None
+        device = torch.device('cpu')
+        model = MolScribe(ckpt_path, device=device)
 
+        # --- predict ---
+        print(f"[PREDICT] Running prediction on {file_name}", flush=True)
+        out = model.predict_image_file(image_path)   # 返回 dict，含 smiles / formula 等字段
         duration = time.time() - start_time
+
+        smiles = out.get('smiles') if out else None
+        formula = out.get('formula') if out else None
+        canonical = out.get('canonical_smiles') if out else None
+        confidence = out.get('confidence') if out else None
+
+        # --- validate smiles ---
+        if not smiles or smiles.strip() == '':
+            print(f"[FAIL] No SMILES output for {file_name}", flush=True)
+            sys.exit(2)
 
         result = {
             "file": file_name,
             "smiles": smiles,
             "formula": formula,
-            "canonical_smiles": canonical_smiles,
+            "canonical_smiles": canonical,
             "confidence": confidence,
             "duration_seconds": duration
         }
 
     except Exception as e:
-        print(f"Error processing {image_path}: {e}", file=sys.stderr)
-        duration = time.time() - start_time
-        result["duration_seconds"] = duration
+        print(f"Error processing {image_path}: {traceback.format_exc()}", flush=True)
+        sys.exit(1)
 
     return result
 
