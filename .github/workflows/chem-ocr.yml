@@ -23,8 +23,7 @@ jobs:
           pip install molscribe rdkit
 
       - name: Run OCR pipeline
-        run: |
-          python chem-ocr/run_ocr.py
+        run: python chem-ocr/run_ocr.py
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
