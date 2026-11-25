@@ -122,7 +122,8 @@ class WebDavBackupManager private constructor(
             applyRemoteBank = { groupName, name, questions, bookName ->
                 QuizRepository.applySyncedBank(appContext, groupName = groupName, name = name, bookName = bookName, questions = questions)
             },
-            renameLocalBank = { bankId, newName -> QuizRepository.renameBank(appContext, bankId, newName) }
+            renameLocalBank = { bankId, newName -> QuizRepository.renameBank(appContext, bankId, newName) },
+            context = appContext  // Fix A: 补 context，让引擎能调度全量同步
         )
         try {
             // 两段一次性迁移**互相独立**（各自一个标记、各自持闸、绝不嵌套）：

@@ -91,7 +91,7 @@ class SyncWorker(context: Context, params: WorkerParameters) : CoroutineWorker(c
     override suspend fun doWork(): Result {
         val store = SyncStateStore(applicationContext)
         if (!store.isEnabled() || store.intervalMinutes() == 0) return Result.success()
-        if (store.wifiOnly() && !isUnmetered()) return Result.retry()
+        if (store.wifiOnly() && !SyncScheduler.isUnmetered(applicationContext)) return Result.retry()
         val manager = withContext(Dispatchers.Main.immediate) {
             QuizRepository.init(applicationContext)
             WebDavBackupManager.getInstance(applicationContext)
@@ -121,8 +121,11 @@ class SyncWorker(context: Context, params: WorkerParameters) : CoroutineWorker(c
         const val MAX_ATTEMPTS = 3
     }
 
-    private fun isUnmetered(): Boolean {
-        val manager = applicationContext.getSystemService(ConnectivityManager::class.java) ?: return false
+    /** 内部可视的网络计费状态检查，供 SyncEngine 与本模块共用，避免逻辑复制。
+ * 返回 true 表示当前网络为计费未计费（即 Wi-Fi 或其他免费网络）。
+ */
+    internal fun isUnmetered(context: Context): Boolean {
+        val manager = context.getSystemService(ConnectivityManager::class.java) ?: return false
         val network = manager.activeNetwork ?: return false
         val capabilities = manager.getNetworkCapabilities(network) ?: return false
         return capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_METERED)

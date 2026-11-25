@@ -172,6 +172,9 @@ class RecordEventStore(
         return applied
     }
 
+    /** 只读：返回本地记录的 epoch 值（对应 record-epoch.txt 的内容）。 */
+    fun localEpoch(): Long = rawEpoch()
+
     private fun rawEpoch(): Long = epochFile.takeIf { it.exists() }?.readText()?.trim()?.toLongOrNull() ?: 0L
 
     private fun rawEpoch(value: Long) {

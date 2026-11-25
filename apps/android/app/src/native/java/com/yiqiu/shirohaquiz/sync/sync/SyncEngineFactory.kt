@@ -1,5 +1,6 @@
 package com.yiqiu.shirohaquiz.sync.sync
 
+import android.content.Context
 import com.yiqiu.shirohaquiz.importer.model.Question
 import com.yiqiu.shirohaquiz.state.QuizBank
 import com.yiqiu.shirohaquiz.sync.records.RecordEventStore
@@ -18,6 +19,8 @@ import com.yiqiu.shirohaquiz.sync.webdav.WebDavClient
  *
  * @param recordStore 传 `null` 表示「本轮不接记录同步」，仅供反向断言测试使用；
  *                    生产调用点必须传真实 store。
+ * @param context     上下文，传 null 则不调度全量同步（进度-only 场景）。
+ * @param localEpoch  只读本地记录 epoch，默认值 0L 表示未知（由 RecordEventStore.localEpoch() 提供）。
  */
 internal fun buildSyncEngine(
     client: WebDavClient,
@@ -28,11 +31,16 @@ internal fun buildSyncEngine(
     recordStore: RecordEventStore?,
     localBanks: () -> List<QuizBank>,
     applyRemoteBank: (groupName: String, name: String, questions: List<Question>, bookName: String) -> Boolean,
-    renameLocalBank: (bankId: String, newName: String) -> Unit
+    renameLocalBank: (bankId: String, newName: String) -> Unit,
+    context: Context? = null,
+    localEpoch: () -> Long = { 0L }
 ): SyncEngine {
     // 数据安全闸门：未加载的库（声明题数>0 但题目体为空）绝不许进同步。
     // 放在工厂里而不是调用方，是为了让「忘接线」直接编译不过/立刻抛错。
     SyncBankGuard.requireLoaded(localBanks(), declaredQuestionCount)
+    // localEpoch：每次同步重新读取，不能快照。
+    // 若 recordStore 已注入，每次调用 { recordStore.localEpoch() } 都会实时获取最新值；
+    // 否则回退到默认 0L。必须在工厂每次构建时重新求值，而非快照传递。
     if (recordStore == null) {
         return SyncEngine(
             client = client,
@@ -40,7 +48,9 @@ internal fun buildSyncEngine(
             state = state,
             localBanks = localBanks,
             applyRemoteBank = applyRemoteBank,
-            renameLocalBank = renameLocalBank
+            renameLocalBank = renameLocalBank,
+            context = context,
+            localEpoch = { recordStore?.localEpoch() ?: 0L }
         )
     }
     return SyncEngine(
@@ -53,6 +63,8 @@ internal fun buildSyncEngine(
         localEvents = { recordStore.loadAll() },
         applyRemoteEvents = { events -> recordStore.appendRemote(events) },
         localTombstones = { recordStore.loadTombstones() },
-        applyRemoteTombstones = { tombstones -> recordStore.applyRemoteTombstones(tombstones) }
+        applyRemoteTombstones = { tombstones -> recordStore.applyRemoteTombstones(tombstones) },
+        context = context,
+        localEpoch = { recordStore?.localEpoch() ?: 0L }
     )
 }

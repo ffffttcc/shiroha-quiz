@@ -1,5 +1,6 @@
 package com.yiqiu.shirohaquiz.sync.sync
 
+import android.content.Context
 import com.yiqiu.shirohaquiz.importer.model.Question
 import com.yiqiu.shirohaquiz.state.QuizBank
 import com.yiqiu.shirohaquiz.state.QuizRepository
@@ -57,7 +58,9 @@ class SyncEngine(
     private val localEvents: () -> List<StudyEvent> = { emptyList() },
     private val applyRemoteEvents: (List<StudyEvent>) -> Unit = {},
     private val localTombstones: () -> List<Tombstone> = { emptyList() },
-    private val applyRemoteTombstones: (List<Tombstone>) -> Unit = {}
+    private val applyRemoteTombstones: (List<Tombstone>) -> Unit = {},
+    private val localEpoch: () -> Long = { 0L },  // 新增：只读本地记录 epoch
+    private val context: Context? = null
 ) {
     data class Report(
         val ok: Boolean,
@@ -257,6 +260,9 @@ class SyncEngine(
     /**
      * 轻量通道：只合练习进度。题库清单与记录片**原样沿用远端**，绝不用本地状态重算，
      * 否则会出现「manifest 说题库变了、blob 却没传」的坏状态。
+     *
+     * 若检测到本机有待上传的记录片/tombstone（即与远端 manifest 不一致），
+     * 会在同步结束后通过 context 调度一次全量同步，确保记录最终能被搬过去。
      */
     private fun runProgressOnly(at: Long, remote: SyncManifest?): Report {
         if (remote == null) return Report(true, 0, 0, 0, "云端还没有清单，跳过进度同步")
@@ -271,6 +277,16 @@ class SyncEngine(
             )
             val mergedJson = if (merged.length() == 0) "" else merged.toString()
             val changed = mergedJson != remote.practiceProgressJson
+            // 检查本机是否有待上传的记录片/tombstone 与远端 manifest 不一致
+            val pendingRecords = hasPendingRecords(remote)
+            // 若有待上传记录，检查 Wi-Fi 限制：若开启且非 UNMETERED 网络，则不静默调度而写入可见提示
+            // waitingWifi 在后面的 when 分支里被读取，故声明在 if 之外
+            var waitingWifi = false
+            if (pendingRecords && context != null) {
+                val wifiOnly = state.wifiOnly()
+                val onWifi = SyncScheduler.isUnmetered(context)
+                if (wifiOnly && !onWifi) { waitingWifi = true } else { SyncScheduler.syncSoon(context, progressOnly = false) }
+            }
             if (changed) {
                 val nextEpoch = maxOf(state.epoch(), remote.epoch) + 1L
                 val next = remote.copy(
@@ -283,12 +299,40 @@ class SyncEngine(
                 client.putSyncObject(SyncObjects.MANIFEST, keys.encryptManifest(next))
                 state.advanceEpoch(nextEpoch)
             }
-            state.markSynced(at, if (changed) "刷题进度已上传" else "刷题进度已是最新", state.bankMeta())
-            Report(true, 0, 0, 0, if (changed) "刷题进度已上传" else "刷题进度已是最新")
+            // 修正文案：
+            // - 进度有变 → “刷题进度已上传”
+            // - 进度无变但有待上传记录 → “练习会话已同步，记录待全量同步”
+            // - 进度无变且有待全量同步（等待 Wi-Fi）→ “练习会话已同步，记录待全量同步（等待 Wi-Fi）”
+            // - 进度无变且无待上传记录 → “刷题进度已是最新”
+            val syncResultMsg = when {
+                changed -> "刷题进度已上传"
+                pendingRecords && waitingWifi -> "练习会话已同步，记录待全量同步（等待 Wi-Fi）"
+                pendingRecords -> "练习会话已同步，记录待全量同步"
+                else -> "刷题进度已是最新"
+            }
+            state.markSynced(at, syncResultMsg, state.bankMeta())
+            Report(true, 0, 0, 0, syncResultMsg)
         } catch (error: Exception) {
-            state.recordFailure("进度同步失败：${error.message}", at)
-            Report(false, 0, 0, 0, "进度同步失败：${error.message}")
+            // 失败可见：progressOnly 捕获异常时，last_sync_result 必须带上「记录类未同步」提示
+            state.recordFailure("进度同步失败：${error.message}；记录类未同步", at)
+            Report(false, 0, 0, 0, "进度同步失败：${error.message}；记录类未同步")
         }
+    /**
+     * 判定是否有待上传的记录片/tombstone。
+     * 两个条件任一成立即返回 true：
+     * 1. 本地 tombstone 集合中存在远端 remote.recordTombstones 没有的条目（按 targetKey+epoch+deviceId 判定）
+     * 2. 本地记录 epoch（RecordEventStore.rawEpoch()} 大于 remote.epoch
+     */
+    private fun hasPendingRecords(remote: SyncManifest): Boolean {
+        // 条件1：检查本地 tombstone 是否有远端没有的（按 targetKey+epoch+deviceId 判定）
+        val localTomb = localTombstones()
+        val remoteTombSet = remote.recordTombstones.associateBy { it.targetKey to it.epoch to it.deviceId }
+        val hasExtraTombstone = localTomb.any { local ->
+            !remoteTombSet.contains(local.targetKey to local.epoch to local.deviceId)
+        }
+        // 条件2：本地记录 epoch 是否大于远端 epoch
+        val hasNewerEpoch = localEpoch() > remote.epoch
+        return hasExtraTombstone || hasNewerEpoch
     }
 
     private fun message(uploaded: Int, downloaded: Int, conflicts: Int): String =
