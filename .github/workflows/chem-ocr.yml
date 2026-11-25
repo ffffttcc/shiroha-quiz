@@ -3,8 +3,6 @@ name: Chem OCR Pipeline
 on:
   workflow_dispatch:
   push:
-    paths:
-      - chem-ocr/**
 
 jobs:
   chem-ocr:
