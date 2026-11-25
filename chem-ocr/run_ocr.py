@@ -1,98 +1,131 @@
 #!/usr/bin/env python3
-"""Chemical structure image to SMILES recognition using molscribe + rdkit."""
+"""Chemical structure image to SMILES recognition using molscribe + rdkit.
+
+Processes chemistry structure diagram images and predicts SMILES strings
+with molecular formulas using molscribe and rdkit. Cloud-only execution:
+no torch installed locally; molscribe and rdkit are installed at runtime.
+"""
 
 import time
-import sys
+import json
 import os
+import sys
+from pathlib import Path
+
 
 def predict_smiles(image_path):
-    """Predict SMILES from a chemical structure image using molscribe."""
-    from molscribe import predict
+    """Predict SMILES and formula from a chemical structure image.
+
+    Uses molscribe for SMILES prediction and rdkit for formula calculation.
+    Returns dict with file, smiles, formula, canonical_smiles, confidence,
+    and duration. If prediction fails, confidence is None and other fields
+    contain reasonable fallbacks.
+    """
     from rdkit import Chem
-    
+
     start_time = time.time()
-    
-    # Use molscribe to predict SMILES from structure image
-    # molscribe.predict returns a list of predictions with smiles and scores
-    try:
-        predictions = predict(image_path)
-        if predictions:
-            # Get the top prediction
-            top = predictions[0]
-            smiles = top.smiles
-            confidence = getattr(top, 'score', None)
-            if confidence is None:
-                confidence = getattr(top, 'probability', None)
-                if confidence is None:
-                    confidence = None
-        else:
-            smiles = ""
-            confidence = None
-    except Exception as e:
-        smiles = ""
-        confidence = None
-        print(f"Molscribe error for {image_path}: {e}", file=sys.stderr)
-    
-    # Use rdkit to compute molecular formula and canonical SMILES
-    try:
-        mol = Chem.MolFromSmiles(smiles)
-        if mol is not None:
-            canonical_smiles = Chem.MolToSmiles(mol)
-            formula = Chem.GetFormulae(mol)
-        else:
-            canonical_smiles = smiles
-            formula = "C?H?O?"
-    except Exception as e:
-        canonical_smiles = smiles
-        formula = "C?H?O?"
-        print(f"RDKit error for {image_path}: {e}", file=sys.stderr)
-    
-    elapsed = time.time() - start_time
-    
-    return {
-        "smiles": smiles,
-        "canonical_smiles": canonical_smiles,
-        "formula": formula,
-        "confidence": confidence,
-        "elapsed": elapsed
+    file_name = Path(image_path).name
+
+    # Default result in case of failure
+    result = {
+        "file": file_name,
+        "smiles": None,
+        "formula": None,
+        "canonical_smiles": None,
+        "confidence": None,
+        "duration_seconds": 0.0
     }
 
-def main():
-    inputs_dir = os.path.join(os.path.dirname(__file__), "inputs")
-    out_dir = os.path.join(os.path.dirname(__file__), "out")
-    os.makedirs(out_dir, exist_ok=True)
-    
-    results = {}
-    
-    # Process each image in the inputs directory
-    image_files = sorted([f for f in os.listdir(inputs_dir) if f.endswith(('.png', '.jpg', '.jpeg'))])
-    
-    for img_name in image_files:
-        img_path = os.path.join(inputs_dir, img_name)
-        print(f"Processing {img_name}...")
-        result = predict_smiles(img_path)
-        results[img_name] = {
-            "file": img_name,
-            "smiles": result["smiles"],
-            "formula": result["formula"],
-            "canonical_smiles": result["canonical_smiles"],
-            "confidence": result["confidence"],
-            "elapsed": result["elapsed"]
+    try:
+        # molscribe-based structure prediction
+        try:
+            from molscribe import predict as molscribe_predict
+            predictions = molscribe_predict(image_path)
+            if predictions and len(predictions) > 0:
+                top = predictions[0]
+                smiles = getattr(top, 'smiles', None) or getattr(top, 'smiles_string', None)
+                confidence = getattr(top, 'score', None)
+                if confidence is None:
+                    confidence = getattr(top, 'probability', None)
+            else:
+                smiles = None
+                confidence = None
+        except Exception:
+            smiles = None
+            confidence = None
+
+        # rdkit-based formula calculation and canonical SMILES
+        if smiles is not None:
+            try:
+                mol = Chem.MolFromSmiles(smiles)
+                if mol is not None:
+                    formula = Chem.rdMolDescriptors.CalcMolFormula(mol)
+                    canonical_smiles = Chem.MolToSmiles(mol)
+                else:
+                    # Invalid SMILES from molscribe; try to infer from image
+                    formula = None
+                    canonical_smiles = None
+            except Exception:
+                formula = None
+                canonical_smiles = None
+        else:
+            formula = None
+            canonical_smiles = None
+
+        duration = time.time() - start_time
+
+        result = {
+            "file": file_name,
+            "smiles": smiles,
+            "formula": formula,
+            "canonical_smiles": canonical_smiles,
+            "confidence": confidence,
+            "duration_seconds": duration
         }
-        print(f"  SMILES: {results[img_name]['smiles']}")
-        print(f"  Formula: {results[img_name]['formula']}")
-        print(f"  Confidence: {results[img_name]['confidence']}")
-    
-    # Write results to output JSON
-    output_path = os.path.join(out_dir, "result.json")
-    with open(output_path, "w", encoding="utf-8") as f:
-        import json
-        json.dump(results, f, ensure_ascii=False, indent=2)
-    
-    print(f"Results written to {output_path}")
-    for name, res in results.items():
-        print(f"  {name}: file={res['file']}, smiles={res['smiles']}, formula={res['formula']}, "
-              f"canonical={res['canonical_smiles']}, confidence={res['confidence']}")
+
+    except Exception as e:
+        print(f"Error processing {image_path}: {e}", file=sys.stderr)
+        duration = time.time() - start_time
+        result["duration_seconds"] = duration
+
+    return result
+
+
+def main():
+    """Main entry point: process all images in chem-ocr/inputs/ and output results."""
+    base_dir = Path(__file__).parent
+    inputs_dir = base_dir / "inputs"
+    out_dir = base_dir / "out"
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    # Find all image files in inputs directory
+    image_files = []
+    if inputs_dir.exists():
+        image_files = sorted(
+            list(inputs_dir.glob("*.png")) + list(inputs_dir.glob("*.jpg")) + list(inputs_dir.glob("*.jpeg"))
+        )
+
+    results = []
+
+    for img_path in image_files:
+        print(f"Processing: {img_path}")
+        result = predict_smiles(str(img_path))
+        results.append(result)
+        print(f"  -> SMILES: {result['smiles']}, Formula: {result['formula']}, "
+              f"Canonical: {result['canonical_smiles']}, Confidence: {result['confidence']}, "
+              f"Duration: {result['duration_seconds']:.2f}s")
+
+    # Write results to result.json
+    output_path = out_dir / "result.json"
+    with open(output_path, 'w', encoding='utf-8') as f:
+        json.dump(results, f, indent=2, ensure_ascii=False)
+
+    print(f"\nResults written to: {output_path}")
+    print(f"Total images processed: {len(results)}")
+
+    return 0
+
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
