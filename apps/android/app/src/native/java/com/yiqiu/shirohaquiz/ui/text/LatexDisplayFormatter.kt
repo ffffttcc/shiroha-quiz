@@ -5,8 +5,17 @@ package com.yiqiu.shirohaquiz.ui.text
  *
  * It keeps the stored question text untouched and only converts a safe subset of
  * common LaTeX fragments into readable plain math text for display.
+ *
+ * Feature: latexRenderingEnabled (default true). When disabled, returns original text unchanged.
  */
 object LatexDisplayFormatter {
+    /** Feature flag: when true, render LaTeX; when false, return original text. */
+    val latexRenderingEnabled = true
+
+    /** LRU cache for formatted results. Max 300 entries, key=original string, value=converted result. */
+    private val formatCache = android.util.LruCache<String, String>(300)
+
+    /** Known LaTeX command → Unicode replacement mappings (original set). */
     private val commandReplacements = linkedMapOf(
         "\\\\leq" to "≤",
         "\\\\le" to "≤",
@@ -43,6 +52,13 @@ object LatexDisplayFormatter {
         "\\\\%" to "%"
     )
 
+    /** Additional common LaTeX command conversions for enhanced rendering. */
+    private val extraCommandReplacements = linkedMapOf(
+        "\\\\rho" to "ρ",
+        "\\\\sqrt" to "√",
+        "\\\\frac" to "\\frac"
+    )
+
     private val superscriptMap = mapOf(
         '0' to '⁰', '1' to '¹', '2' to '²', '3' to '³', '4' to '⁴',
         '5' to '⁵', '6' to '⁶', '7' to '⁷', '8' to '⁸', '9' to '⁹',
@@ -63,6 +79,19 @@ object LatexDisplayFormatter {
     private val fencedCodeBlockRegex = Regex("""```[\s\S]*?```""")
 
     fun format(text: String): String {
+        // Feature flag check: when disabled, return original text unchanged
+        if (!latexRenderingEnabled) return text
+
+        // Check cache first
+        if (formatCache.containsKey(text)) return formatCache.get(text)!!
+
+        val result = formatInternal(text)
+        // Cache already enforces max 300; LruCache evicts oldest when full.
+        formatCache.put(text, result)
+        return result
+    }
+
+    private fun formatInternal(text: String): String {
         val normalized = text.replace("\r\n", "\n").replace('\r', '\n')
         if (normalized.isEmpty()) return normalized
 
@@ -70,7 +99,40 @@ object LatexDisplayFormatter {
             fencedCodeBlockRegex.containsMatchIn(normalized) -> formatAroundFencedCodeBlocks(normalized)
             looksLikeIndentedCode(normalized) -> normalized
             !mightContainLatex(normalized) -> normalized
-            else -> formatInternal(normalized)
+            else -> {
+                // Original pipeline: unwrap → environments → fractions/roots → commands → scripts → noise cleanup
+                var working = unwrapFormulaDelimiters(normalized)
+                working = convertLatexEnvironments(working)
+                working = convertFractionsAndRoots(working)
+                working = replaceCommands(working)
+                working = convertScripts(working)
+                working = cleanupLatexNoise(working)
+                working
+            }
+        }
+        return formatted
+            .replace("\t", "    ")
+            .trimOuterWhitespacePreservingIndent()
+    }
+
+    /** Uncached internal formatting (bypasses cache for single-call paths). */
+    private fun formatInternalUncached(text: String): String {
+        val normalized = text.replace("\r\n", "\n").replace('\r', '\n')
+        if (normalized.isEmpty()) return normalized
+
+        val formatted = when {
+            fencedCodeBlockRegex.containsMatchIn(normalized) -> formatAroundFencedCodeBlocks(normalized)
+            looksLikeIndentedCode(normalized) -> normalized
+            !mightContainLatex(normalized) -> normalized
+            else -> {
+                var working = unwrapFormulaDelimiters(normalized)
+                working = convertLatexEnvironments(working)
+                working = convertFractionsAndRoots(working)
+                working = replaceCommands(working)
+                working = convertScripts(working)
+                working = cleanupLatexNoise(working)
+                working
+            }
         }
         return formatted
             .replace("\t", "    ")
@@ -92,7 +154,7 @@ object LatexDisplayFormatter {
     }
 
     private fun formatNonCodeText(text: String): String {
-        return if (mightContainLatex(text)) formatInternal(text) else text
+        return if (mightContainLatex(text)) formatInternalUncached(text) else text
     }
 
     private fun looksLikeIndentedCode(text: String): Boolean {
@@ -108,16 +170,7 @@ object LatexDisplayFormatter {
         return '$' in text || '\\' in text || "^{" in text || "_{" in text
     }
 
-    private fun formatInternal(text: String): String {
-        var working = unwrapFormulaDelimiters(text)
-        working = convertLatexEnvironments(working)
-        working = convertFractionsAndRoots(working)
-        working = replaceCommands(working)
-        working = convertScripts(working)
-        working = cleanupLatexNoise(working)
-        return working
-    }
-
+    /** Unwrap \\[...\\], \\(...\\), $$...$$, and inline $...$$. */
     private fun unwrapFormulaDelimiters(text: String): String {
         var working = text
         working = working.replace(Regex("""\\\[([\s\S]*?)\\\]""")) { match -> formatInternal(match.groupValues[1].trim()) }
@@ -319,12 +372,47 @@ object LatexDisplayFormatter {
         return builder.toString()
     }
 
+    /** Replace known commands; unknown \\xxx are preserved as-is (no drop, no exception). */
     private fun replaceCommands(text: String): String {
         var working = text
+        // Apply known command replacements first
         commandReplacements.forEach { (pattern, replacement) ->
             working = working.replace(Regex(pattern), replacement)
         }
-        return working
+        // Apply extra common command conversions
+        extraCommandReplacements.forEach { (pattern, replacement) ->
+            when (replacement is String) {
+                working = working.replace(Regex(pattern), replacement)
+            }
+        }
+        // Unknown \\xxx are preserved naturally: we only replace known patterns,
+        // and cleanupLatexNoise below does not strip arbitrary \\xxx.
+        working
+    }
+
+    /** 
+     * Unknown command fallback: ensures any \\xxx not in the known list are preserved.
+     * Applied after replaceCommands. Matches backslash followed by command name letters
+     * and preserves the fragment unchanged.
+     */
+    private fun unknownCommandFallback(text: String): String {
+        // Match \\<letters> and preserve it.
+        // The regex \\\\[a-zA-Z]+ in Kotlin matches backslash + letters.
+        return text.replace("\\\\[a-zA-Z]+") { match ->
+            // Preserve the unknown command fragment as-is
+            match.value
+        }
+    }
+
+    private fun cleanupLatexNoise(text: String): String {
+        return text
+            .replace(Regex("""\\(?:left|right)"""), "")
+            .replace(Regex("""\\[,;:!]"""), " ")
+            .replace(Regex("""\\ """), " ")
+            .replace("\\{", "{")
+            .replace("\\}", "}")
+            .replace("\\_", "_")
+            .replace("\\$", "$")
     }
 
     private fun convertScripts(text: String): String {
@@ -364,17 +452,6 @@ object LatexDisplayFormatter {
         } else {
             if (superscript) "^($compact)" else "_($compact)"
         }
-    }
-
-    private fun cleanupLatexNoise(text: String): String {
-        return text
-            .replace(Regex("""\\(?:left|right)"""), "")
-            .replace(Regex("""\\[,;:!]"""), " ")
-            .replace(Regex("""\\ """), " ")
-            .replace("\\{", "{")
-            .replace("\\}", "}")
-            .replace("\\_", "_")
-            .replace("\\$", "$")
     }
 
     private fun formatFraction(numerator: String, denominator: String): String {

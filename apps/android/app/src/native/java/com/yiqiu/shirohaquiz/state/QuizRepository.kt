@@ -3181,6 +3181,40 @@ object QuizRepository {
         loadAllBanksBlocking()
         val incoming = runCatching { readValidatedBackup(bytes) }
             .getOrElse { return "恢复失败：${it.message ?: "备份不安全或数据损坏"}。" }
+        // --- record-events 目录恢复 (最小改动：有则写入，无则静默兼容旧备份) ---
+        val recordEventsDir = File(context.filesDir, "record-events")
+        try {
+            ZipInputStream(bytes.inputStream()).use { zip ->
+                var entry: ZipEntry?
+                while ((entry = zip.nextEntry()) != null) {
+                    val name = entry.name
+                    if (name.startsWith("record-events/") && entry.isFile) {
+                        val relativeName = name.substringAfter("record-events/")
+                        // 安全检查：防止路径穿越/非法字符
+                        if (!SafeZipReader.isSafeEntryName(relativeName)) {
+                            zip.closeEntry()
+                            throw IllegalArgumentException("Unsafe record-events entry name: $relativeName")
+                        }
+                        recordEventsDir.mkdirs()
+                        // 先写入临时文件，再原子替换，避免半个文件
+                        val tmpFile = File(recordEventsDir, "." + relativeName + ".tmp")
+                        FileOutputStream(tmpFile).use { out ->
+                            out.write(zip.readBytes())
+                            out.flush()
+                        }
+                        if (!tmpFile.renameTo(File(recordEventsDir, relativeName))) {
+                            zip.closeEntry()
+                            throw IOException("Failed to atomic-replace tmp file for $relativeName")
+                        }
+                    }
+                    zip.closeEntry()
+                }
+            }
+        } catch (e: IllegalArgumentException) {
+            // 安全检查失败，不恢复 record-events，但不影响主恢复流程
+        } catch (e: IOException) {
+            // IO �错误也不影响主恢复流程
+        }
         val previous = currentBackupContent()
         val restorePracticeMetadata = capturePracticeRestoreMetadata()
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -4261,6 +4295,41 @@ object QuizRepository {
                         zip.closeEntry()
                     }
                 }
+
+            // Include record-events directory (作答事件层，确保换机/恢复不丢失)
+            val recordDir = File(appContext.filesDir, "record-events")
+            if (recordDir.exists() && recordDir.isDirectory) {
+                val allowedNames = mutableSetOf<String>()
+                // 预先读出合法文件名（SafeZipReader.isSafeEntryName 的过滤规则）
+                val whitelist = listOf(
+                    "events.jsonl",
+                    "tombstones.txt",
+                    "record-epoch.txt",
+                    "legacy-migrated.marker"
+                )
+                val shardFiles = recordDir.listFiles()?.filter { it.isFile }?.filter { file ->
+                    val name = file.name
+                    // filename 不含 /，不含 ..，通过 isSafeEntryName 检查
+                    !name.contains('/') && !name.startsWith("/") && SafeZipReader.isSafeEntryName(name)
+                }?.map { it.name } ?: emptyList()
+                // 把预设白名单加进去（只要文件存在才加）
+                whitelist.forEach { name ->
+                    val f = File(recordDir, name)
+                    if (f.exists() && f.isFile) allowedNames.add(name)
+                }
+                // 以及目录下的分片/加密文件（名字合法）
+                shardFiles.forEach { name ->
+                    val f = File(recordDir, name)
+                    if (f.exists() && f.isFile) allowedNames.add(name)
+                }
+                // 写入 zip
+                allowedNames.sorted().forEach { name ->
+                    val file = File(recordDir, name)
+                    zip.putNextEntry(ZipEntry("record-events/$name"))
+                    file.inputStream().use { input -> input.copyTo(zip) }
+                    zip.closeEntry()
+                }
+            }
         }
         return output.toByteArray()
     }
