@@ -32,6 +32,7 @@ import org.json.JSONTokener
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.FileOutputStream
+import java.io.IOException
 import java.nio.ByteBuffer
 import java.nio.charset.CodingErrorAction
 import java.text.Normalizer
@@ -3185,10 +3186,10 @@ object QuizRepository {
         val recordEventsDir = File(context.filesDir, "record-events")
         try {
             ZipInputStream(bytes.inputStream()).use { zip ->
-                var entry: ZipEntry?
-                while ((entry = zip.nextEntry()) != null) {
+                while (true) {
+                    val entry = zip.nextEntry() ?: break
                     val name = entry.name
-                    if (name.startsWith("record-events/") && entry.isFile) {
+                    if (name.startsWith("record-events/") && !entry.isDirectory) {
                         val relativeName = name.substringAfter("record-events/")
                         // 安全检查：防止路径穿越/非法字符
                         if (!SafeZipReader.isSafeEntryName(relativeName)) {
@@ -3213,7 +3214,7 @@ object QuizRepository {
         } catch (e: IllegalArgumentException) {
             // 安全检查失败，不恢复 record-events，但不影响主恢复流程
         } catch (e: IOException) {
-            // IO �错误也不影响主恢复流程
+            // IO 错误也不影响主恢复流程
         }
         val previous = currentBackupContent()
         val restorePracticeMetadata = capturePracticeRestoreMetadata()
@@ -4297,8 +4298,9 @@ object QuizRepository {
                 }
 
             // Include record-events directory (作答事件层，确保换机/恢复不丢失)
-            val recordDir = File(appContext.filesDir, "record-events")
-            if (recordDir.exists() && recordDir.isDirectory) {
+            val recordEventsRoot = appContext?.filesDir
+            val recordDir = recordEventsRoot?.let { File(it, "record-events") }
+            if (recordDir != null && recordDir.exists() && recordDir.isDirectory) {
                 val allowedNames = mutableSetOf<String>()
                 // 预先读出合法文件名（SafeZipReader.isSafeEntryName 的过滤规则）
                 val whitelist = listOf(

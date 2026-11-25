@@ -381,9 +381,7 @@ object LatexDisplayFormatter {
         }
         // Apply extra common command conversions
         extraCommandReplacements.forEach { (pattern, replacement) ->
-            when (replacement is String) {
-                working = working.replace(Regex(pattern), replacement)
-            }
+            working = working.replace(Regex(pattern), replacement)
         }
         // Unknown \\xxx are preserved naturally: we only replace known patterns,
         // and cleanupLatexNoise below does not strip arbitrary \\xxx.
@@ -398,7 +396,7 @@ object LatexDisplayFormatter {
     private fun unknownCommandFallback(text: String): String {
         // Match \\<letters> and preserve it.
         // The regex \\\\[a-zA-Z]+ in Kotlin matches backslash + letters.
-        return text.replace("\\\\[a-zA-Z]+") { match ->
+        return text.replace(Regex("\\\\[a-zA-Z]+")) { match ->
             // Preserve the unknown command fragment as-is
             match.value
         }
