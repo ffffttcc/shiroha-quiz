@@ -4,7 +4,7 @@ import android.content.Context
 import com.yiqiu.shirohaquiz.state.QuizBank
 import com.yiqiu.shirohaquiz.importer.model.Question
 import com.yiqiu.shirohaquiz.importer.model.QuestionType
-import com.yiqiu.shirohaquiz.state.JsonImportPreview
+import com.yiqiu.shirohaquiz.state.QuizRepository.JsonImportPreview
 import com.yiqiu.shirohaquiz.state.BackupContentPreview
 import com.yiqiu.shirohaquiz.state.QuizRepository
 
