@@ -83,7 +83,7 @@ object LatexDisplayFormatter {
         if (!latexRenderingEnabled) return text
 
         // Check cache first
-        if (formatCache.containsKey(text)) return formatCache.get(text)!!
+        formatCache.get(text)?.let { return it }
 
         val result = formatInternal(text)
         // Cache already enforces max 300; LruCache evicts oldest when full.
@@ -385,7 +385,7 @@ object LatexDisplayFormatter {
         }
         // Unknown \\xxx are preserved naturally: we only replace known patterns,
         // and cleanupLatexNoise below does not strip arbitrary \\xxx.
-        working
+        return working
     }
 
     /** 

@@ -3187,7 +3187,7 @@ object QuizRepository {
         try {
             ZipInputStream(bytes.inputStream()).use { zip ->
                 while (true) {
-                    val entry = zip.nextEntry() ?: break
+                    val entry = zip.nextEntry ?: break
                     val name = entry.name
                     if (name.startsWith("record-events/") && !entry.isDirectory) {
                         val relativeName = name.substringAfter("record-events/")
