@@ -278,6 +278,18 @@ fun WebDavBackupScreen(onBack: () -> Unit) {
                     if (busy) LinearProgressIndicator(progress = {
                         if ((current.totalBytes ?: 0) > 0) (current.transferredBytes.toFloat() / current.totalBytes!!).coerceIn(0f, 1f) else 0f
                     }, modifier = Modifier.fillMaxWidth())
+                    // 传输量明细：光有进度条看不出已传多少 MB，长传输时无法判断是否在动
+                    val doneBytes = current.transferredBytes
+                    val totalBytes = current.totalBytes ?: 0L
+                    if (busy && totalBytes > 0 && doneBytes >= 0) {
+                        val doneMb = doneBytes / 1048576.0
+                        val totalMb = totalBytes / 1048576.0
+                        val percent = ((doneBytes * 100) / totalBytes).coerceIn(0L, 100L)
+                        Text(
+                            text = "已传输 %.1f / %.1f MB（%d%%）".format(doneMb, totalMb, percent),
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    }
                     Text(current.message.ifBlank { "正在处理，请稍候……" }, style = MaterialTheme.typography.bodyMedium)
                     if (busy) TextButton(onClick = { manager.cancelCurrentTask() }) { Text("取消当前任务") }
                     else TextButton(onClick = { manager.dismissFinishedTask() }) { Text("收起任务提示") }
