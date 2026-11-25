@@ -1427,8 +1427,11 @@ object QuizRepository {
         } else {
             filteredItems.take(count)
         }
-        practiceQuestions = selectedItems.map { it.question }
-        practiceQuestionSessionKeys = buildPracticeSessionKeys(selectedItems)
+        // 按题型稳定排序：SINGLE→MULTIPLE→JUDGE/CLOZE/BLANK→SHORT
+        // sortedBy 是稳定排序，同类型内部保持原有相对顺序（题号/抽取顺序不变）
+        val sortedSelectedItems = sortByTypeRank(selectedItems) { it.question.type }
+        practiceQuestions = sortedSelectedItems.map { it.question }
+        practiceQuestionSessionKeys = buildPracticeSessionKeys(sortedSelectedItems)
         practiceSourceLabel = sourceLabel.ifBlank { currentPracticeScopeLabel() }
         practiceIndex = 0
         selectedAnswer = emptyList()
@@ -5450,6 +5453,21 @@ object QuizRepository {
     fun questionTypeCounts(questions: List<Question> = activePracticePoolQuestions()): Map<QuestionType, Int> {
         return QuestionType.values().associateWith { type -> questions.count { it.type == type } }
     }
+
+    /** 按题型优先级排序：SINGLE→MULTIPLE→其他(JUDGE/CLOZE/BLANK)→SHORT，未知给9。
+     *  稳定排序，同类型内部保持原有相对顺序。
+     */
+    private val QUESTION_TYPE_RANK: Map<QuestionType, Int> = mapOf(
+        QuestionType.SINGLE to 0,
+        QuestionType.MULTIPLE to 1,
+        QuestionType.JUDGE to 2,
+        QuestionType.CLOZE to 2,
+        QuestionType.BLANK to 2,
+        QuestionType.SHORT to 3
+    )
+
+    private inline fun <T> sortByTypeRank(items: List<T>, typeOf: (T) -> QuestionType): List<T> =
+        items.sortedBy { QUESTION_TYPE_RANK[typeOf(it)] ?: 9 }
 
     fun practiceAnsweredCount(): Int = practiceSessionResults.size
 
