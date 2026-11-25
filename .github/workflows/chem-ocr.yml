@@ -20,7 +20,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pip install --no-cache-dir huggingface_hub molscribe rdkit
+          pip install --no-cache-dir "numpy<2" huggingface_hub molscribe rdkit
 
       - name: Run OCR pipeline
         run: python chem-ocr/run_ocr.py
