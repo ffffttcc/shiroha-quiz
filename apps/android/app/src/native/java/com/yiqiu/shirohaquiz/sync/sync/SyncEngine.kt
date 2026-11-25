@@ -320,10 +320,11 @@ class SyncEngine(
     }
 
     /**
-     * 判定是否有待上传的记录片/tombstone。
-     * 两个条件任一成立即返回 true：
+     * 判定是否需要补跑一次全量同步（记录片/tombstone 与本机或云端不一致）。
+     * 三个条件任一成立即返回 true：
      * 1. 本地 tombstone 集合中存在远端 remote.recordTombstones 没有的条目（按 targetKey+epoch+deviceId 判定）
-     * 2. 本地记录 epoch（RecordEventStore.rawEpoch()} 大于 remote.epoch
+     * 2. 本地记录 epoch（RecordEventStore.localEpoch()）大于 remote.epoch —— 本机有记录待上传
+     * 3. remote.epoch 大于本机状态 epoch —— 云端有更晚的记录待拉取（换机/多设备时最常走这条）
      */
     private fun hasPendingRecords(remote: SyncManifest): Boolean {
         // 条件1：检查本地 tombstone 是否有远端没有的（按 targetKey+epoch+deviceId 判定）
@@ -332,9 +333,11 @@ class SyncEngine(
         val hasExtraTombstone = localTomb.any { local ->
             !remoteTombSet.contains(local.targetKey to local.epoch to local.deviceId)
         }
-        // 条件2：本地记录 epoch 是否大于远端 epoch
-        val hasNewerEpoch = localEpoch() > remote.epoch
-        return hasExtraTombstone || hasNewerEpoch
+        // 条件2：本机记录 epoch 比云端新（有上传待办）
+        val hasNewerLocalEpoch = localEpoch() > remote.epoch
+        // 条件3：云端 epoch 比本机状态新（有拉取待办）
+        val cloudIsAhead = remote.epoch > state.epoch()
+        return hasExtraTombstone || hasNewerLocalEpoch || cloudIsAhead
     }
 
     private fun message(uploaded: Int, downloaded: Int, conflicts: Int): String =
