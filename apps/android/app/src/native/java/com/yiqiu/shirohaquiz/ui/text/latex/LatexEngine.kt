@@ -3,7 +3,8 @@ package com.yiqiu.shirohaquiz.ui.text.latex
 import android.content.Context
 import android.util.Log
 import android.util.LruCache
-import com.taoweiji.quickjs.QuickJSContext
+import com.quickjs.JSContext
+import com.quickjs.QuickJS
 import java.io.InputStreamReader
 import java.util.concurrent.Callable
 import java.util.concurrent.Executors
@@ -23,7 +24,9 @@ object LatexEngine {
     private const val MAX_CACHE_ENTRIES = 300
 
     @Volatile
-    private var context: QuickJSContext? = null
+    private var context: JSContext? = null
+    @Volatile
+    private var runtime: QuickJS? = null
     @Volatile
     private var initialized = false
     @Volatile
@@ -48,7 +51,8 @@ object LatexEngine {
         val start = System.currentTimeMillis()
         executor.execute {
             try {
-                val ctx = QuickJSContext.create()
+                val rt = QuickJS.createRuntime()
+                val ctx = rt.createContext()
                 // Load MathJax bundle from assets
                 val inputStream = appContext.assets.open(ASSET_PATH)
                 val reader = InputStreamReader(inputStream)
@@ -61,7 +65,8 @@ object LatexEngine {
                 reader.close()
                 val jsCode = sb.toString()
                 // Evaluate the bundle (defines globalThis.renderLatex)
-                ctx.evaluate(jsCode)
+                ctx.executeScript("mathjax.bundle.js", jsCode)
+                runtime = rt
                 context = ctx
                 initTimeMs = System.currentTimeMillis() - start
                 initialized = true
@@ -95,7 +100,7 @@ object LatexEngine {
         // Check cache first
         cache.get(latex)?.let { return it }
 
-        val future: Future<String?> = executor.submit(Callable {
+        val future: Future<String?> = executor.submit(Callable<String?> {
             val ctx = context!!
             try {
                 // Escape for JS string literal
@@ -106,7 +111,7 @@ object LatexEngine {
                     .replace("\r", "\\r")
                     .replace("\t", "\\t")
                 val js = "globalThis.renderLatex(\"$escaped\")"
-                val result = ctx.evaluate(js).toString()
+                val result = ctx.executeScript("render.js", js).toString()
                 if (result.startsWith("ERR:")) {
                     Log.w(TAG, "MathJax error: ${result.substring(4)}")
                     null
@@ -148,8 +153,10 @@ object LatexEngine {
     /** Shutdown the engine (for testing/cleanup). */
     fun shutdown() {
         executor.shutdownNow()
-        context?.dispose()
+        context?.close()
         context = null
+        runtime?.close()
+        runtime = null
         initialized = false
         initError = null
         initTimeMs = -1
