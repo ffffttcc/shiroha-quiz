@@ -18,3 +18,10 @@
 # Keep Serializable/Parcelable used by navigation
 -keepclassmembers class * implements java.io.Serializable { *; }
 -keepclassmembers class * implements android.os.Parcelable { *; }
+
+# QuickJS (LaTeX rendering PoC)
+-keep class com.quickjs.** { *; }
+-keep class org.quickjs.** { *; }
+
+# AndroidSVG (LaTeX rendering PoC)
+-keep class com.caverock.androidsvg.** { *; }

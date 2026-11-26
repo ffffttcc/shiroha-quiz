@@ -29,6 +29,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Dashboard
+import androidx.compose.material.icons.rounded.Functions
 import androidx.compose.material.icons.rounded.ImportExport
 import androidx.compose.material.icons.rounded.School
 import androidx.compose.material.icons.rounded.Search
@@ -88,6 +89,7 @@ import com.yiqiu.shirohaquiz.ui.screens.RecordsScreen
 import com.yiqiu.shirohaquiz.ui.screens.StandardImportFormatScreen
 import com.yiqiu.shirohaquiz.ui.screens.WrongBookPreferenceScreen
 import com.yiqiu.shirohaquiz.ui.screens.WrongBookScreen
+import com.yiqiu.shirohaquiz.ui.components.LatexTestScreen
 import com.yiqiu.shirohaquiz.ui.theme.ShirohaColors
 import com.yiqiu.shirohaquiz.ui.theme.ShirohaDimens
 import com.yiqiu.shirohaquiz.ui.theme.ShirohaMotion
@@ -124,7 +126,8 @@ private enum class MainTab(
     DataManagement("数据管理", Icons.Rounded.Settings, showInBottomBar = false),
     CloudBackup("云端备份", Icons.Rounded.ImportExport, showInBottomBar = false),
     StandardFormat("标准格式", Icons.Rounded.ImportExport, showInBottomBar = false),
-    About("关于", Icons.Rounded.Settings, showInBottomBar = false)
+    About("关于", Icons.Rounded.Settings, showInBottomBar = false),
+    LatexTest("LaTeX 测试", Icons.Rounded.Functions, showInBottomBar = false)
 }
 
 private fun MainTab.fallbackBackTarget(): MainTab? = when (this) {
@@ -153,7 +156,8 @@ private fun MainTab.fallbackBackTarget(): MainTab? = when (this) {
     MainTab.DocumentRecognition,
     MainTab.DataManagement,
     MainTab.StandardFormat,
-    MainTab.About -> MainTab.Me
+    MainTab.About,
+    MainTab.LatexTest -> MainTab.Me
 }
 
 private data class AppRouteSnapshot(
@@ -485,6 +489,9 @@ fun ShirohaAppShell() {
                             onBack = { navigateBack() }
                         )
                         MainTab.About -> AboutScreen(
+                            onBack = { navigateBack() }
+                        )
+                        MainTab.LatexTest -> LatexTestScreen(
                             onBack = { navigateBack() }
                         )
                     }

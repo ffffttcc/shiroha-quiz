@@ -31,6 +31,7 @@ import androidx.compose.material.icons.rounded.Description
 import androidx.compose.material.icons.rounded.CloudUpload
 import androidx.compose.material.icons.rounded.FactCheck
 import androidx.compose.material.icons.rounded.FileOpen
+import androidx.compose.material.icons.rounded.Functions
 import androidx.compose.material.icons.rounded.Image
 import androidx.compose.material.icons.rounded.LightMode
 import androidx.compose.material.icons.rounded.Save
@@ -95,7 +96,8 @@ fun MeScreen(
     onOpenAiSettings: () -> Unit,
     onOpenDataManagement: () -> Unit,
     onOpenStandardFormat: () -> Unit,
-    onOpenAbout: () -> Unit
+    onOpenAbout: () -> Unit,
+    onOpenLatexTest: () -> Unit
 ) {
     val context = LocalContext.current
 
@@ -208,6 +210,13 @@ fun MeScreen(
                 title = "关于 Shiroha Quiz",
                 desc = "版本、项目与开源信息。",
                 onClick = onOpenAbout
+            )
+            Spacer(Modifier.height(10.dp))
+            FeaturePlanStrip(
+                icon = Icons.Rounded.Functions,
+                title = "LaTeX 渲染测试",
+                desc = "测试 MathJax + QuickJS 渲染引擎。",
+                onClick = onOpenLatexTest
             )
         }
     }
