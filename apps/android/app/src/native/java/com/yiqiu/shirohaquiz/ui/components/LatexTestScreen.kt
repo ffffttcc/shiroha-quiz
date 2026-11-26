@@ -7,7 +7,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.weight
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -17,6 +16,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -30,7 +30,6 @@ import com.yiqiu.shirohaquiz.ui.text.latex.LatexEngine
 import com.yiqiu.shirohaquiz.ui.text.latex.LatexSvgPainter
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.Unit
 
 /**
  * Test screen for LaTeX rendering engine (PoC).
@@ -43,23 +42,6 @@ fun LatexTestScreen(onBack: () -> Unit) {
     var initTimeMs by remember { mutableStateOf<Long>(-1) }
     var initError by remember { mutableStateOf<String?>(null) }
     var results by remember { mutableStateOf<List<FormulaResult>>(emptyList()) }
-
-    LaunchedEffect(Unit) {
-        if (!initDone) {
-            LatexEngine.init(context)
-            // Wait for init to complete
-            while (!LatexEngine.isReady() && LatexEngine.getInitError() == null) {
-                Thread.sleep(50)
-            }
-            initTimeMs = LatexEngine.getInitTimeMs()
-            initError = LatexEngine.getInitError()
-            initDone = true
-            
-            if (LatexEngine.isReady()) {
-                renderFormulas()
-            }
-        }
-    }
 
     fun renderFormulas() {
         val formulas = listOf(
@@ -76,13 +58,30 @@ fun LatexTestScreen(onBack: () -> Unit) {
             "1.8\\times10^{-5}",
             "K_{ZnY}^{\\prime}"
         )
-        
+
         val rendered = formulas.map { latex ->
             val svg = LatexEngine.renderSvgBlocking(latex)
             val painter = svg?.let { LatexSvgPainter.toPainter(it) }
             FormulaResult(latex, painter)
         }
         results = rendered
+    }
+
+    LaunchedEffect(true) {
+        if (!initDone) {
+            LatexEngine.init(context)
+            // Wait for init to complete
+            while (!LatexEngine.isReady() && LatexEngine.getInitError() == null) {
+                Thread.sleep(50)
+            }
+            initTimeMs = LatexEngine.getInitTimeMs()
+            initError = LatexEngine.getInitError()
+            initDone = true
+
+            if (LatexEngine.isReady()) {
+                renderFormulas()
+            }
+        }
     }
 
     val successCount = results.count { it.painter != null }
@@ -107,7 +106,7 @@ fun LatexTestScreen(onBack: () -> Unit) {
                 Text(
                     text = "成功渲染: $successCount / ${results.size}",
                     fontSize = 14.sp,
-                    color = if (successCount == results.size) Color.Green else Color.Orange
+                    color = if (successCount == results.size) Color.Green else Color.rgb(255, 165, 0)
                 )
                 initError?.let {
                     Text(
@@ -136,11 +135,10 @@ fun LatexTestScreen(onBack: () -> Unit) {
                                     .padding(end = 16.dp),
                                 contentAlignment = Alignment.Center
                             ) {
-                                androidx.compose.ui.graphics.painter.Painter.painterResource = { painter }
                                 androidx.compose.foundation.Image(
                                     painter = painter,
                                     contentDescription = null,
-                                    contentScale = androidx.compose.ui.layout.ContentScale.Fit
+                                    contentScale = ContentScale.Fit
                                 )
                             }
                         } ?: androidx.compose.foundation.layout.Box(

@@ -3,8 +3,9 @@ package com.yiqiu.shirohaquiz.ui.text.latex
 import android.content.Context
 import android.util.Log
 import android.util.LruCache
-import com.quickjs.QuickJSContext
+import com.taoweiji.quickjs.QuickJSContext
 import java.io.InputStreamReader
+import java.util.concurrent.Callable
 import java.util.concurrent.Executors
 import java.util.concurrent.Future
 import java.util.concurrent.TimeUnit
@@ -93,8 +94,8 @@ object LatexEngine {
         }
         // Check cache first
         cache.get(latex)?.let { return it }
-        
-        val future: Future<String?> = executor.submit {
+
+        val future: Future<String?> = executor.submit(Callable {
             val ctx = context!!
             try {
                 // Escape for JS string literal
@@ -108,20 +109,22 @@ object LatexEngine {
                 val result = ctx.evaluate(js).toString()
                 if (result.startsWith("ERR:")) {
                     Log.w(TAG, "MathJax error: ${result.substring(4)}")
-                    return@submit null
+                    null
+                } else {
+                    // Basic validation: should be SVG
+                    if (!result.trim().startsWith("<svg")) {
+                        Log.w(TAG, "Unexpected output (not SVG): ${result.take(100)}")
+                        null
+                    } else {
+                        result
+                    }
                 }
-                // Basic validation: should be SVG
-                if (!result.trim().startsWith("<svg")) {
-                    Log.w(TAG, "Unexpected output (not SVG): ${result.take(100)}")
-                    return@submit null
-                }
-                result
             } catch (e: Exception) {
                 Log.w(TAG, "Render exception: ${e.message}")
                 null
             }
-        }
-        
+        })
+
         return try {
             future.get(RENDER_TIMEOUT_MS, TimeUnit.MILLISECONDS)?.also { svg ->
                 if (svg != null) cache.put(latex, svg)
