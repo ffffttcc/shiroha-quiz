@@ -53,7 +53,7 @@ object LatexEngine {
             try {
                 val rt = QuickJS.createRuntime()
                 val ctx = rt.createContext()
-                
+
                 // Polyfill for MathJax bundle (node-verified minimal set)
                 val polyfill = """
                     if (typeof globalThis === 'undefined') { var globalThis = this; }
@@ -65,8 +65,8 @@ object LatexEngine {
                     }
                     if (typeof __dirname === 'undefined') { var __dirname = '/tmp'; }
                 """.trimIndent()
-                ctx.executeScript("polyfill.js", polyfill)
-                
+                ctx.executeScript(polyfill, "polyfill.js")
+
                 // Load MathJax bundle from assets
                 val inputStream = appContext.assets.open(ASSET_PATH)
                 val reader = InputStreamReader(inputStream)
@@ -78,15 +78,20 @@ object LatexEngine {
                 }
                 reader.close()
                 val jsCode = sb.toString()
+
                 // Evaluate the bundle (defines globalThis.renderLatex)
-                ctx.executeScript("mathjax.bundle.js", jsCode)
-                
+                try {
+                    ctx.executeScript(jsCode, "mathjax.bundle.js")
+                } catch (e: Exception) {
+                    throw RuntimeException("bundle exec failed: ${e.message}")
+                }
+
                 // Verify bundle exported renderLatex
-                val check = ctx.executeScript("check.js", "typeof globalThis.renderLatex").toString()
+                val check = ctx.executeScript("typeof globalThis.renderLatex", "check.js").toString()
                 if (check != "function") {
                     throw RuntimeException("bundle 未导出 renderLatex（typeof=$check）")
                 }
-                
+
                 runtime = rt
                 context = ctx
                 initTimeMs = System.currentTimeMillis() - start
@@ -137,7 +142,7 @@ object LatexEngine {
                     .replace("\r", "\\r")
                     .replace("\t", "\\t")
                 val js = "globalThis.renderLatex(\"$escaped\")"
-                val result = ctx.executeScript("render.js", js).toString()
+                val result = ctx.executeScript(js, "render.js").toString()
                 if (result.startsWith("ERR:")) {
                     Log.w(TAG, "MathJax error: ${result.substring(4)}")
                     null
