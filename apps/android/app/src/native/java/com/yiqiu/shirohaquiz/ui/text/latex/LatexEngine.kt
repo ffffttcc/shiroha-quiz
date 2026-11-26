@@ -53,6 +53,20 @@ object LatexEngine {
             try {
                 val rt = QuickJS.createRuntime()
                 val ctx = rt.createContext()
+                
+                // Polyfill for MathJax bundle (node-verified minimal set)
+                val polyfill = """
+                    if (typeof globalThis === 'undefined') { var globalThis = this; }
+                    if (typeof require === 'undefined') {
+                        var require = function (id) {
+                            if (id === 'path') return { resolve: function () { return Array.prototype.join.call(arguments, '/'); } };
+                            return {};
+                        };
+                    }
+                    if (typeof __dirname === 'undefined') { var __dirname = '/tmp'; }
+                """.trimIndent()
+                ctx.executeScript("polyfill.js", polyfill)
+                
                 // Load MathJax bundle from assets
                 val inputStream = appContext.assets.open(ASSET_PATH)
                 val reader = InputStreamReader(inputStream)
@@ -66,13 +80,25 @@ object LatexEngine {
                 val jsCode = sb.toString()
                 // Evaluate the bundle (defines globalThis.renderLatex)
                 ctx.executeScript("mathjax.bundle.js", jsCode)
+                
+                // Verify bundle exported renderLatex
+                val check = ctx.executeScript("check.js", "typeof globalThis.renderLatex").toString()
+                if (check != "function") {
+                    throw RuntimeException("bundle 未导出 renderLatex（typeof=$check）")
+                }
+                
                 runtime = rt
                 context = ctx
                 initTimeMs = System.currentTimeMillis() - start
                 initialized = true
                 Log.i(TAG, "LaTeX engine initialized in ${initTimeMs} ms")
             } catch (e: Exception) {
-                initError = e.message ?: e.javaClass.simpleName
+                // Clean message: strip redundant "ReferenceError: ReferenceError;" prefix if present
+                var msg = e.message ?: e.javaClass.simpleName
+                if (msg.startsWith("ReferenceError: ReferenceError;")) {
+                    msg = msg.substringAfter("ReferenceError: ReferenceError;").trim()
+                }
+                initError = msg
                 Log.e(TAG, "Failed to initialize LaTeX engine", e)
             }
         }
