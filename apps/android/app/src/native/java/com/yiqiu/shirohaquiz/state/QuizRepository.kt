@@ -1447,7 +1447,7 @@ object QuizRepository {
         practiceDraftAnswers.clear()
         practiceQuestionBankIds.clear()
         practiceOptionShuffleSeed = System.currentTimeMillis()
-        selectedItems.forEachIndexed { index, item ->
+        sortedSelectedItems.forEachIndexed { index, item ->
             val sessionKey = practiceQuestionSessionKeys[index]
             if (item.bankId.isNotBlank()) practiceQuestionBankIds[sessionKey] = item.bankId
         }
@@ -5411,6 +5411,19 @@ object QuizRepository {
             practiceSessionResults[key] = answer.correct
         }
         snapshot.drafts.forEach { (key, draft) -> practiceDraftAnswers[key] = draft }
+
+        // 续做也按题型稳定排序，与 startPracticeSession 保持一致；分组练习不动，避免打乱批次边界
+        if (practiceBatchGroupSize <= 1 && practiceQuestions.size == practiceQuestionSessionKeys.size) {
+            val restoreKey = practiceQuestionSessionKeys.getOrNull(practiceIndex)
+            val pairs = practiceQuestions.zip(practiceQuestionSessionKeys)
+                .sortedBy { QUESTION_TYPE_RANK[it.first.type] ?: 9 }
+            val sortedKeys = pairs.map { it.second }
+            if (sortedKeys != practiceQuestionSessionKeys) {
+                practiceQuestions = pairs.map { it.first }.toMutableList()
+                practiceQuestionSessionKeys = sortedKeys
+                practiceIndex = restoreKey?.let { sortedKeys.indexOf(it) }?.takeIf { it >= 0 } ?: 0
+            }
+        }
         practiceSequentialBankId = snapshot.sequentialBankId
         practiceSequentialStartIndex = snapshot.sequentialStartIndex
         practiceSequentialUsesReciteProgress = snapshot.sequentialUsesRecite

@@ -413,7 +413,8 @@ fun ShirohaAppShell() {
                             onOpenAiSettings = { navigateTo(MainTab.AiSettings) },
                             onOpenDataManagement = { navigateTo(MainTab.DataManagement) },
                             onOpenStandardFormat = { navigateTo(MainTab.StandardFormat) },
-                            onOpenAbout = { navigateTo(MainTab.About) }
+                            onOpenAbout = { navigateTo(MainTab.About) },
+                            onOpenLatexTest = { navigateTo(MainTab.LatexTest) }
                         )
                         MainTab.Exam -> ExamScreen(
                             onBackHome = { navigateRoot(MainTab.Home) },
