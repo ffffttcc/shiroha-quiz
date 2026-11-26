@@ -3,7 +3,7 @@ package com.yiqiu.shirohaquiz.ui.text.latex
 import android.content.Context
 import android.util.Log
 import android.util.LruCache
-import com.quickjs.QuickJSContext
+import com.taoweiji.quickjs.QuickJSContext
 import java.io.InputStreamReader
 import java.util.concurrent.Callable
 import java.util.concurrent.Executors

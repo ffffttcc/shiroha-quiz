@@ -1,9 +1,11 @@
 package com.yiqiu.shirohaquiz.ui.text.latex
 
 import android.graphics.Picture
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Painter
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
+import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.toPx
 import com.caverock.androidsvg.SVG
@@ -110,12 +112,12 @@ object LatexSvgPainter {
                 canvas.save()
                 canvas.translate(translateX, translateY)
                 canvas.scale(scale, scale)
-                picture.draw(canvas)
+                picture.draw(canvas.nativeCanvas)
                 canvas.restore()
             }
         }
 
-        override val intrinsicWidth: Int = picture.width
-        override val intrinsicHeight: Int = picture.height
+        override val intrinsicSize: Size
+            get() = Size(picture.width.toFloat(), picture.height.toFloat())
     }
 }
