@@ -58,13 +58,13 @@ object LatexSvgPainter {
 
         // Replace style="fill:currentColor" (and similar) with fill attribute
         // MathJax outputs: style="fill:currentColor;stroke:currentColor;stroke-width:0"
-        result = result.replace(Regex("style=\"[^\"]*fill:\\s*currentColor[^\"]*\"")) { match ->
+        result = result.replace(Regex("""style="[^"]*fill:\s*currentColor[^"]*""")) { match ->
             val style = match.value
             var replacement = ""
             if (style.contains("fill:")) replacement += " fill=\"currentColor\""
             if (style.contains("stroke:")) replacement += " stroke=\"currentColor\""
             if (style.contains("stroke-width:")) {
-                val width = Regex("stroke-width:\\s*([^;\"]+)").find(style)?.groupValues?.get(1)
+                val width = Regex("""stroke-width:\s*([^;"]+)""").find(style)?.groupValues?.get(1)
                 width?.let { replacement += " stroke-width=\"$it\"" }
             }
             replacement
@@ -72,8 +72,8 @@ object LatexSvgPainter {
 
         // Remove width/height attributes that use 'ex' units (AndroidSVG doesn't support ex)
         // Keep viewBox if present
-        result = result.replace(Regex("\\swidth=\"[^\"]*ex[^\"]*\"", RegexOption.IGNORE_CASE), "")
-        result = result.replace(Regex("\\sheight=\"[^\"]*ex[^\"]*\"", RegexOption.IGNORE_CASE), "")
+        result = result.replace(Regex("""\swidth="[^"]*ex[^"]*""", RegexOption.IGNORE_CASE), "")
+        result = result.replace(Regex("""\sheight="[^"]*ex[^"]*""", RegexOption.IGNORE_CASE), "")
 
         // If width/height are pure numbers without units, keep them
         // If they have px/pt/cm/mm/in/pc, AndroidSVG handles them
@@ -81,8 +81,8 @@ object LatexSvgPainter {
         // Ensure viewBox exists (MathJax usually provides it)
         if (!result.contains("viewBox", true)) {
             // Try to extract width/height for viewBox
-            val widthMatch = Regex("width=\"([^\"]+)\"").find(result)
-            val heightMatch = Regex("height=\"([^\"]+)\"").find(result)
+            val widthMatch = Regex("""width="([^"]+)"""").find(result)
+            val heightMatch = Regex("""height="([^"]+)"""").find(result)
             val w = widthMatch?.groupValues?.get(1)?.toDoubleOrNull() ?: 100.0
             val h = heightMatch?.groupValues?.get(1)?.toDoubleOrNull() ?: 100.0
             result = result.replaceFirst("<svg", "<svg viewBox=\"0 0 $w $h\"")
@@ -115,7 +115,7 @@ object LatexSvgPainter {
             }
         }
 
-        override fun getIntrinsicWidth(): Dp = (picture.width * 1.0f).dp
-        override fun getIntrinsicHeight(): Dp = (picture.height * 1.0f).dp
+        override val intrinsicWidth: Dp = (picture.width * 1.0f).dp
+        override val intrinsicHeight: Dp = (picture.height * 1.0f).dp
     }
 }
