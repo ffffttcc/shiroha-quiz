@@ -2,7 +2,7 @@ package com.yiqiu.shirohaquiz.ui.text.latex
 
 import android.graphics.Picture
 import androidx.compose.ui.geometry.Size
-import androidx.compose.ui.graphics.Painter
+import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.graphics.nativeCanvas

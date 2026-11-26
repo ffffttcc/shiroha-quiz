@@ -109,7 +109,7 @@ fun LatexTestScreen(onBack: () -> Unit) {
                 Text(
                     text = "成功渲染: $successCount / ${results.size}",
                     fontSize = 14.sp,
-                    color = if (successCount == results.size) Color.Green else Color.rgb(255, 165, 0)
+                    color = if (successCount == results.size) Color.Green else Color(0xFFFFA500)
                 )
                 initError?.let {
                     Text(
