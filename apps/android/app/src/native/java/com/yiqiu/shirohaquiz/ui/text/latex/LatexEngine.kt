@@ -33,6 +33,8 @@ object LatexEngine {
     private var initError: String? = null
     @Volatile
     private var initTimeMs: Long = -1
+    @Volatile
+    private var lastRenderError: String? = null
 
     private val executor = Executors.newSingleThreadExecutor({ r ->
         Thread(r, "LatexEngine-JS").apply { isDaemon = true }
@@ -109,7 +111,7 @@ object LatexEngine {
         }
     }
 
-    /** Returns true if init() has completed successfully. */
+    /** Initialize the engine. Must be called once from Application or first Activity. */
     fun isReady(): Boolean = initialized && context != null && initError == null
 
     /** Returns the initialization time in milliseconds, or -1 if not initialized. */
@@ -118,15 +120,18 @@ object LatexEngine {
     /** Returns the initialization error message, or null if successful. */
     fun getInitError(): String? = initError
 
+    /** Returns the last render error message, or null if last render succeeded. */
+    fun getLastRenderError(): String? = lastRenderError
+
     /**
      * Render LaTeX to SVG string (blocking, with timeout).
-     * Returns null on failure, timeout, or if engine not ready.
+     * Returns SVG string on success, or error message string on failure (prefixed with "ERR:").
      * Uses LRU cache (key = raw LaTeX string).
      */
     fun renderSvgBlocking(latex: String): String? {
         if (!isReady()) {
             Log.w(TAG, "Engine not ready: initialized=$initialized, context=${context != null}, error=$initError")
-            return null
+            return "ERR:Engine not ready: $initError"
         }
         // Check cache first
         cache.get(latex)?.let { return it }
@@ -142,36 +147,57 @@ object LatexEngine {
                     .replace("\r", "\\r")
                     .replace("\t", "\\t")
                 val js = "globalThis.renderLatex(\"$escaped\")"
-                val result = ctx.executeScript(js, "render.js").toString()
+                val resultObj = ctx.executeScript(js, "render.js")
+                val retClass = resultObj?.javaClass?.name ?: "null"
+                val result = resultObj?.toString() ?: "null"
+                Log.d(TAG, "render retClass=$retClass ret=${result.take(200)}")
+
                 if (result.startsWith("ERR:")) {
-                    Log.w(TAG, "MathJax error: ${result.substring(4)}")
-                    null
+                    Log.w(TAG, "render fail tex=$latex ret=$result")
+                    return@Callable result
                 } else {
                     // Basic validation: should be SVG
                     if (!result.trim().startsWith("<svg")) {
-                        Log.w(TAG, "Unexpected output (not SVG): ${result.take(100)}")
-                        null
+                        val err = "Unexpected output (not SVG): ${result.take(200)}"
+                        Log.w(TAG, "render fail tex=$latex ret=$result")
+                        return@Callable "ERR:$err"
                     } else {
                         result
                     }
                 }
             } catch (e: Exception) {
-                Log.w(TAG, "Render exception: ${e.message}")
-                null
+                val err = "Render exception: ${e.message}"
+                Log.w(TAG, "render fail tex=$latex err=$err", e)
+                return@Callable "ERR:$err"
             }
         })
 
         return try {
-            future.get(RENDER_TIMEOUT_MS, TimeUnit.MILLISECONDS)?.also { svg ->
-                if (svg != null) cache.put(latex, svg)
+            future.get(RENDER_TIMEOUT_MS, TimeUnit.MILLISECONDS)?.also { result ->
+                if (result != null) {
+                    if (result.startsWith("ERR:")) {
+                        lastRenderError = result.substring(4)
+                    } else {
+                        lastRenderError = null
+                        cache.put(latex, result)
+                    }
+                    result
+                } else {
+                    lastRenderError = "Unknown error"
+                    "ERR:Unknown error"
+                }
             }
         } catch (e: TimeoutException) {
             future.cancel(true)
-            Log.w(TAG, "Render timeout (>${RENDER_TIMEOUT_MS}ms) for: ${latex.take(50)}")
-            null
+            val err = "Render timeout (>${RENDER_TIMEOUT_MS}ms) for: ${latex.take(50)}"
+            Log.w(TAG, err)
+            lastRenderError = err
+            "ERR:$err"
         } catch (e: Exception) {
-            Log.w(TAG, "Render future exception: ${e.message}")
-            null
+            val err = "Render future exception: ${e.message}"
+            Log.w(TAG, err, e)
+            lastRenderError = err
+            "ERR:$err"
         }
     }
 

@@ -63,9 +63,13 @@ fun LatexTestScreen(onBack: () -> Unit) {
         )
 
         val rendered = formulas.map { latex ->
-            val svg = LatexEngine.renderSvgBlocking(latex)
-            val painter = svg?.let { LatexSvgPainter.toPainter(it) }
-            FormulaResult(latex, painter)
+            val svgOrError = LatexEngine.renderSvgBlocking(latex)
+            val (painter, renderError) = if (svgOrError != null && svgOrError.startsWith("ERR:")) {
+                null to svgOrError.substring(4)
+            } else {
+                svgOrError?.let { LatexSvgPainter.toPainter(it) } to null
+            }
+            FormulaResult(latex, painter, renderError)
         }
         results = rendered
     }
@@ -158,7 +162,7 @@ fun LatexTestScreen(onBack: () -> Unit) {
                             )
                         }
 
-                        // Raw LaTeX source
+                        // Raw LaTeX source + render error
                         Column(modifier = Modifier.weight(1f).fillMaxWidth()) {
                             Text(
                                 text = result.latex,
@@ -167,6 +171,16 @@ fun LatexTestScreen(onBack: () -> Unit) {
                                 maxLines = 2,
                                 overflow = TextOverflow.Ellipsis
                             )
+                            result.renderError?.let { err ->
+                                Text(
+                                    text = "错误: $err",
+                                    fontSize = 11.sp,
+                                    color = Color.Red,
+                                    fontFamily = FontFamily.Monospace,
+                                    maxLines = 3,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
                         }
                     }
                 }
@@ -177,5 +191,6 @@ fun LatexTestScreen(onBack: () -> Unit) {
 
 private data class FormulaResult(
     val latex: String,
-    val painter: Painter?
+    val painter: Painter?,
+    val renderError: String?
 )
