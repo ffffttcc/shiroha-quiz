@@ -110,8 +110,8 @@ object SvgPathRenderer {
         baseMatrix: Matrix
     ): Path {
         val path = Path()
-        var x = 0f
-        var y = 0f
+        var x: Float = 0f
+        var y: Float = 0f
 
         // Combine: first apply localTransform (from <g> ancestors), then baseMatrix (viewBox->canvas)
         // M = baseMatrix * localTransform  (apply local first, then base)
@@ -130,8 +130,8 @@ object SvgPathRenderer {
                     while (i + 1 < args.size) {
                         val nx = args[i].toFloat()
                         val ny = args[i + 1].toFloat()
-                        val tx = if (isRelative) x + nx else nx
-                        val ty = if (isRelative) y + ny else ny
+                        val tx: Float = if (isRelative) x + nx else nx
+                        val ty: Float = if (isRelative) y + ny else ny
                         x = tx; y = ty
                         val pt = floatArrayOf(nx, ny)
                         combinedTransform.mapPoints(pt)
@@ -143,8 +143,8 @@ object SvgPathRenderer {
                     while (i + 1 < args.size) {
                         val nx = args[i].toFloat()
                         val ny = args[i + 1].toFloat()
-                        val tx = if (isRelative) x + nx else nx
-                        val ty = if (isRelative) y + ny else ny
+                        val tx: Float = if (isRelative) x + nx else nx
+                        val ty: Float = if (isRelative) y + ny else ny
                         x = tx; y = ty
                         val pt = floatArrayOf(nx, ny)
                         combinedTransform.mapPoints(pt)
@@ -155,7 +155,7 @@ object SvgPathRenderer {
                 'H' -> {
                     for (arg in args) {
                         val nx = arg.toFloat()
-                        val tx = if (isRelative) x + nx else nx
+                        val tx: Float = if (isRelative) x + nx else nx
                         x = tx
                         val pt = floatArrayOf(nx, y)
                         combinedTransform.mapPoints(pt)
@@ -165,7 +165,7 @@ object SvgPathRenderer {
                 'V' -> {
                     for (arg in args) {
                         val ny = arg.toFloat()
-                        val ty = if (isRelative) y + ny else ny
+                        val ty: Float = if (isRelative) y + ny else ny
                         y = ty
                         val pt = floatArrayOf(x, ny)
                         combinedTransform.mapPoints(pt)
@@ -181,12 +181,12 @@ object SvgPathRenderer {
                         val nx = args[i + 4].toFloat()
                         val ny = args[i + 5].toFloat()
 
-                        val tx1 = if (isRelative) x + x1 else x1
-                        val ty1 = if (isRelative) y + y1 else y1
-                        val tx2 = if (isRelative) x + x2 else x2
-                        val ty2 = if (isRelative) y + y2 else y2
-                        val tx = if (isRelative) x + nx else nx
-                        val ty = if (isRelative) y + ny else ny
+                        val tx1: Float = if (isRelative) x + x1 else x1
+                        val ty1: Float = if (isRelative) y + y1 else y1
+                        val tx2: Float = if (isRelative) x + x2 else x2
+                        val ty2: Float = if (isRelative) y + y2 else y2
+                        val tx: Float = if (isRelative) x + nx else nx
+                        val ty: Float = if (isRelative) y + ny else ny
 
                         val pts = floatArrayOf(tx1, ty1, tx2, ty2, tx, ty)
                         combinedTransform.mapPoints(pts)
@@ -203,10 +203,10 @@ object SvgPathRenderer {
                         val nx = args[i + 2].toFloat()
                         val ny = args[i + 3].toFloat()
 
-                        val tx1 = if (isRelative) x + x1 else x1
-                        val ty1 = if (isRelative) y + y1 else y1
-                        val tx = if (isRelative) x + nx else nx
-                        val ty = if (isRelative) y + ny else ny
+                        val tx1: Float = if (isRelative) x + x1 else x1
+                        val ty1: Float = if (isRelative) y + y1 else y1
+                        val tx: Float = if (isRelative) x + nx else nx
+                        val ty: Float = if (isRelative) y + ny else ny
 
                         val pts = floatArrayOf(tx1, ty1, tx, ty)
                         combinedTransform.mapPoints(pts)
