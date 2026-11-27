@@ -1629,8 +1629,7 @@ fun PracticeScreen(
                     else -> "正确答案"
                 }
                 LatexTextOrFallback(
-                text = "$answerLabel：
-$answerText",
+                text = "$answerLabel：\n$answerText",
                 style = TextStyle(
                     fontSize = 14.sp,
                     lineHeight = 20.sp,
