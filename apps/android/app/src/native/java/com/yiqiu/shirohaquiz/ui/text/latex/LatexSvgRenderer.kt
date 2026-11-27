@@ -1,164 +1,153 @@
 package com.yiqiu.shirohaquiz.ui.text.latex
 
 import android.graphics.Bitmap
+import android.graphics.Color
 import android.graphics.Picture
-import android.util.Log
 import android.util.LruCache
+import android.util.Log
 import com.caverock.androidsvg.SVG
 import com.caverock.androidsvg.SVGParseException
+import kotlin.math.coerceAtLeast
 
 /**
- * Renders MathJax SVG string to Android Bitmap using AndroidSVG.
- * Handles MathJax-specific quirks: vertical-align with ex units, currentColor, etc.
- * Provides LRU cache keyed by formula hash + target height.
+ * SVG → Bitmap 渲染器（单一写入者，替代 LatexSvgPainter 的两套尺寸逻辑）。
+ * 线程安全：内部 LruCache + AndroidSVG 无状态解析，可多线程并发调用。
  */
 object LatexSvgRenderer {
     private const val TAG = "LatexRender"
-    private const val MAX_CACHE_ENTRIES = 100
+    private const val MAX_CACHE_ENTRIES = 80
 
     private val cache = object : LruCache<String, Bitmap>(MAX_CACHE_ENTRIES) {
         override fun entryRemoved(evicted: Boolean, key: String, oldValue: Bitmap, newValue: Bitmap?) {
             super.entryRemoved(evicted, key, oldValue, newValue)
             if (evicted) {
                 oldValue.recycle()
-                Log.d(TAG, "Cache evicted: $key")
+                Log.d(TAG, "Bitmap cache evicted: ${key.take(40)}...")
             }
         }
     }
 
     /**
-     * Render SVG string to Bitmap.
-     * @param svgStr Raw SVG string from MathJax
-     * @param targetHeightPx Target height in pixels (width calculated from viewBox aspect ratio)
-     * @param color Foreground color as ARGB int (default black #FF000000)
-     * @return Bitmap (ARGB_8888) or null on failure
+     * 清洗后的 SVG 数据类（供单测/调试复用）。
      */
-    fun render(svgStr: String, targetHeightPx: Int, color: Int = 0xFF000000): Bitmap? {
-        val key = "${svgStr.hashCode()}_$targetHeightPx"
-        cache.get(key)?.let { return it }
+    data class SanitizedSvg(
+        val cleaned: String,
+        val vbWidth: Float,
+        val vbHeight: Float
+    )
 
-        val cleaned = cleanSvg(svgStr, color)
-        Log.d(TAG, "cleaned SVG head: ${cleaned.take(200)}")
+    /**
+     * SVG 原始字符串 → Bitmap。
+     * @param svgRaw MathJax 输出的原始 SVG 字符串
+     * @param targetHeightPx 目标高度（像素），宽度按 viewBox 比例自动计算
+     * @param colorArgb 替换 currentColor 用的颜色（ARGB，默认黑）
+     * @return Bitmap 或 null（失败已在内部记日志）
+     */
+    fun render(svgRaw: String, targetHeightPx: Int, colorArgb: Int = Color.BLACK): Bitmap? {
+        val cacheKey = "$svgRaw|$targetHeightPx|$colorArgb"
+        cache.get(cacheKey)?.let { return it }
 
-        val svg = try {
-            SVG.getFromString(cleaned)
-        } catch (e: SVGParseException) {
-            Log.e(TAG, "SVG parse failed: ${e.message}", e)
-            return null
-        }
+        val sanitized = sanitize(svgRaw, colorArgb)
+        val cleaned = sanitized.cleaned
+        val vbW = sanitized.vbWidth
+        val vbH = sanitized.vbHeight
 
-        val vb = svg.documentViewBox
-        val viewW = if (vb != null && vb.width() > 0) vb.width() else 1608f
-        val viewH = if (vb != null && vb.height() > 0) vb.height() else 836f
+        // 计算目标宽高（保持 viewBox 比例）
+        val targetWidthPx = (targetHeightPx * vbW / vbH).toInt().coerceAtLeast(1)
+        val targetHeight = targetHeightPx.coerceAtLeast(1)
 
-        val targetW = (targetHeightPx * viewW / viewH).toInt().coerceAtLeast(1)
-        val targetH = targetHeightPx.coerceAtLeast(1)
+        Log.d(TAG, "sanitized=${cleaned.take(160)}")
+        Log.d(TAG, "vb=${vbW.toInt()}x${vbH.toInt()} targetH=$targetHeightPx bitmap=${targetWidthPx}x$targetHeight")
 
-        Log.d(TAG, "viewBox=${viewW}x${viewH} targetH=$targetHeightPx bitmap=${targetW}x$targetH")
+        return try {
+            val svg = SVG.getFromString(cleaned)
+            // 首选：renderToPicture(w, h) —— 直接产出 Picture，尺寸由我们控制
+            val picture: Picture = try {
+                val method = SVG::class.java.getMethod("renderToPicture", Int::class.java, Int::class.java)
+                method.invoke(svg, targetWidthPx, targetHeight) as Picture
+            } catch (e: NoSuchMethodException) {
+                // 兜底：旧版本用 setDocumentWidth/Height + beginRecording
+                svg.setDocumentWidth(targetWidthPx.toFloat())
+                svg.setDocumentHeight(targetHeight.toFloat())
+                val pic = Picture()
+                val canvas = pic.beginRecording(targetWidthPx, targetHeight)
+                svg.renderToCanvas(canvas)
+                pic.endRecording()
+                pic
+            }
 
-        val bitmap: Bitmap
-        try {
-            // Attempt 1: renderToPicture with explicit dimensions (most reliable)
-            val picture = svg.renderToPicture(targetW, targetH)
-            bitmap = Bitmap.createBitmap(targetW, targetH, Bitmap.Config.ARGB_8888)
+            val bitmap = Bitmap.createBitmap(targetWidthPx, targetHeight, Bitmap.Config.ARGB_8888)
             val canvas = android.graphics.Canvas(bitmap)
             picture.draw(canvas)
-        } catch (e1: Exception) {
-            Log.w(TAG, "renderToPicture failed, trying setDocumentWidth/Height: ${e1.message}")
-            try {
-                // Attempt 2: setDocumentWidth/Height + beginRecording
-                svg.setDocumentWidth(targetW.toFloat())
-                svg.setDocumentHeight(targetH.toFloat())
-                val picture = android.graphics.Picture()
-                val canvas = picture.beginRecording(targetW, targetH)
-                svg.renderToCanvas(canvas)
-                picture.endRecording()
-                bitmap = Bitmap.createBitmap(targetW, targetH, Bitmap.Config.ARGB_8888)
-                val drawCanvas = android.graphics.Canvas(bitmap)
-                picture.draw(drawCanvas)
-            } catch (e2: Exception) {
-                Log.w(TAG, "setDocumentWidth/Height failed, trying manual scale: ${e2.message}")
-                try {
-                    // Attempt 3: manual scale using viewBox
-                    val picture = svg.renderToPicture(viewW.toInt().coerceAtLeast(1), viewH.toInt().coerceAtLeast(1))
-                    bitmap = Bitmap.createBitmap(targetW, targetH, Bitmap.Config.ARGB_8888)
-                    val canvas = android.graphics.Canvas(bitmap)
-                    val scaleX = targetW.toFloat() / viewW
-                    val scaleY = targetH.toFloat() / viewH
-                    canvas.scale(scaleX, scaleY)
-                    picture.draw(canvas)
-                } catch (e3: Exception) {
-                    Log.e(TAG, "All render attempts failed: ${e3.message}", e3)
-                    return null
-                }
-            }
+            cache.put(cacheKey, bitmap)
+            bitmap
+        } catch (e: SVGParseException) {
+            Log.e(TAG, "render fail: SVGParseException: ${e.message}")
+            null
+        } catch (e: Exception) {
+            Log.e(TAG, "render fail: ${e.javaClass.simpleName}: ${e.message}")
+            null
         }
-
-        cache.put(key, bitmap)
-        Log.d(TAG, "render ok: ${bitmap.width}x${bitmap.height}")
-        return bitmap
     }
 
     /**
-     * Clean MathJax SVG for AndroidSVG compatibility.
-     * Steps (order fixed, each step idempotent):
-     * a) Remove vertical-align with ex units from root svg style
-     * b) Replace currentColor with provided color hex
-     * c) Extract viewBox, set width/height to pure px numbers (strip ex/em/pt)
-     * d) Remove role/focusable/aria-* attributes (optional, avoid interference)
+     * 纯函数清洗链（固定顺序、幂等、每步独立）。
+     * 返回 SanitizedSvg(cleaned, vbWidth, vbHeight)
      */
-    private fun cleanSvg(svg: String, color: Int): String {
+    internal fun sanitize(svg: String, colorArgb: Int): SanitizedSvg {
         var result = svg.trim()
+        val colorHex = String.format("#%06X", (0xFFFFFF and colorArgb))
 
-        // a) Remove vertical-align with ex units from style attribute
-        result = result.replace(Regex("""style\s*=\s*"([^"]*)"""")) { match ->
-            val styleContent = match.groupValues[1]
-            val kept = styleContent
-                .split(";")
-                .map { it.trim() }
-                .filter { it.isNotEmpty() && !it.contains("vertical-align", true) }
-                .joinToString("; ")
-            if (kept.isEmpty()) "" else """style="$kept""""
+        // a) 根 <svg> 的 style 里删除含 vertical-align 的声明（androidsvg 不支持 ex）
+        result = result.replace(Regex("""<svg(\s[^>]*)?>""")) { match ->
+            val tag = match.groupValues[0]
+            val styleMatch = Regex("""style\s*=\s*"([^"]*)"""").find(tag)
+            if (styleMatch != null) {
+                val styleContent = styleMatch.groupValues[1]
+                val kept = styleContent
+                    .split(";")
+                    .map { it.trim() }
+                    .filter { it.isNotEmpty() && !it.contains("vertical-align", true) }
+                    .joinToString("; ")
+                val newStyle = if (kept.isEmpty()) "" else """style="$kept""""
+                tag.replace(styleMatch.groupValues[0], newStyle)
+            } else tag
         }
 
-        // b) Replace currentColor with provided color
-        val colorHex = String.format("#%06X", color and 0xFFFFFF)
+        // b) currentColor → #RRGGBB
         result = result.replace("currentColor", colorHex)
 
-        // c) Ensure width/height are pure pixel numbers (strip ex/em/pt), keep viewBox
-        // First, extract viewBox if present for later use
-        val viewBoxMatch = Regex("""viewBox\s*=\s*"([^"]+)"""").find(result)
-        val viewBoxStr = viewBoxMatch?.groupValues?.get(1)
+        // c) 用 viewBox 的 W/H 覆盖根 svg 的 width/height，写成纯数字
+        // 先提取 viewBox
+        var vbW = 1608f
+        var vbH = 836f
+        val vbMatch = Regex("""viewBox\s*=\s*"([^"]+)"""").find(result)
+        if (vbMatch != null) {
+            val parts = vbMatch.groupValues[1].trim().split("\\s+").filter { it.isNotEmpty() }
+            if (parts.size >= 4) {
+                vbW = parts[2].toFloat()
+                vbH = parts[3].toFloat()
+            }
+        }
+        // 删除旧 width/height，重写为纯数字
+        result = result.replace(Regex("""\swidth="[^"]*""", RegexOption.IGNORE_CASE), "")
+            .replace(Regex("""\sheight="[^"]*""", RegexOption.IGNORE_CASE), "")
+        // 确保 viewBox 存在
+        if (vbMatch == null) {
+            result = result.replaceFirst("<svg", "<svg viewBox=\"0 0 $vbW $vbH\"")
+        }
+        result = result.replaceFirst("<svg", "<svg width=\"${vbW.toInt()}\" height=\"${vbH.toInt()}\"")
 
-        // Remove width/height with ex/em/pt units
-        result = result.replace(Regex("""\swidth="[^"]*?(ex|em|pt)[^"]*"""", RegexOption.IGNORE_CASE), "")
-        result = result.replace(Regex("""\sheight="[^"]*?(ex|em|pt)[^"]*"""", RegexOption.IGNORE_CASE), "")
-
-        // Remove any remaining width/height attributes (we'll add pure px ones if viewBox exists)
-        result = result.replace(Regex("""\swidth="[^"]*"""", RegexOption.IGNORE_CASE), "")
-        result = result.replace(Regex("""\sheight="[^"]*"""", RegexOption.IGNORE_CASE), "")
-
-        // If viewBox exists, add pure px width/height based on targetHeightPx logic
-        // But we don't know targetHeightPx here; let AndroidSVG use viewBox directly
-        // So we just ensure viewBox is present and don't add width/height
-
-        // d) Remove role/focusable/aria-* attributes
+        // d) 删 role / focusable / aria-*
         result = result.replace(Regex("""\s(role|focusable|aria-[a-z-]+)\s*=\s*"[^"]*"""", RegexOption.IGNORE_CASE), "")
 
-        // Ensure viewBox exists (fallback to default)
-        if (!result.contains("viewBox", true)) {
-            val w = 1608.0
-            val h = 836.0
-            result = result.replaceFirst("<svg", "<svg viewBox=\"0 0 $w $h\"")
-        }
-
-        return result
+        return SanitizedSvg(result, vbW, vbH)
     }
 
-    /** Clear the LRU cache and recycle bitmaps. */
+    /** 清空缓存并回收 Bitmap */
     fun clearCache() {
-        cache.snapshot().values.forEach { it.recycle() }
+        cache.snapshot().forEach { (_, bmp) -> bmp.recycle() }
         cache.evictAll()
-        Log.d(TAG, "Cache cleared")
+        Log.d(TAG, "Bitmap cache cleared")
     }
 }

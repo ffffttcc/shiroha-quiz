@@ -64,20 +64,14 @@ fun LatexTestScreen(onBack: () -> Unit) {
         )
 
         val rendered = formulas.map { latex ->
-            val svgResult = LatexEngine.renderSvgBlocking(latex)
-            val (bitmap, renderError) = when {
-                svgResult == null || svgResult.startsWith("ERR:") -> {
-                    val errMsg = svgResult?.substringAfter("ERR:") ?: "Unknown error"
-                    null to errMsg
+            val svgResult = LatexEngine.renderSvgString(latex)
+            val (bitmap, renderError) = when (svgResult) {
+                is kotlin.Result.Success -> {
+                    val svg = svgResult.getOrNull()
+                    val bmp = svg?.let { LatexSvgRenderer.render(it, 56.dp.roundToPx()) }
+                    bmp?.let { it.asImageBitmap() } to null
                 }
-                else -> {
-                    val bmp = LatexSvgRenderer.render(svgResult, targetHeightPx = 56)
-                    if (bmp == null) {
-                        null to "Bitmap render returned null"
-                    } else {
-                        bmp.asImageBitmap() to null
-                    }
-                }
+                is kotlin.Result.Failure -> null to svgResult.exceptionOrNull()?.message ?: "Unknown error"
             }
             FormulaResult(latex, bitmap, renderError)
         }
@@ -166,9 +160,11 @@ fun LatexTestScreen(onBack: () -> Unit) {
                             contentAlignment = Alignment.Center
                         ) {
                             Text(
-                                text = "渲染失败",
+                                text = "渲染失败: ${result.renderError ?: "Unknown"}",
                                 fontSize = 12.sp,
-                                color = Color.Red
+                                color = Color.Red,
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis
                             )
                         }
 
