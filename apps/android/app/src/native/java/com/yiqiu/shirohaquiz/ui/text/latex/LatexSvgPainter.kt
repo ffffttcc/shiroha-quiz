@@ -26,24 +26,27 @@ object LatexSvgPainter {
      */
     fun toPainter(svgString: String): PainterResult {
         // Attempt 1: standard preprocessing
-        runCatching { parseToPicture(preprocessSvg(svgString)) }
-            .onSuccess { picture ->
-                return PainterResult.Success(SvgPainter(picture))
-            }
-            .onFailure { e1 ->
-                android.util.Log.w(TAG, "SVG parse attempt 1 failed: ${e1.message}")
-            }
-
-        // Attempt 2: aggressive sanitization
-        runCatching { parseToPicture(sanitizeAggressive(svgString)) }
-            .onSuccess { picture ->
-                android.util.Log.i(TAG, "SVG parse succeeded on attempt 2 (aggressive sanitize)")
-                return PainterResult.Success(SvgPainter(picture))
-            }
-            .onFailure { e2 ->
-                android.util.Log.e(TAG, "SVG parse failed after aggressive sanitize: ${e2.message}; svg_head=${svgString.take(200)}")
-                return PainterResult.Error("androidsvg: ${e2.message}")
-            }
+        return runCatching { parseToPicture(preprocessSvg(svgString)) }
+            .fold(
+                onFailure = { e1 ->
+                    android.util.Log.w(TAG, "SVG parse attempt 1 failed: ${e1.message}")
+                    // Attempt 2: aggressive sanitization
+                    runCatching { parseToPicture(sanitizeAggressive(svgString)) }
+                        .fold(
+                            onFailure = { e2 ->
+                                android.util.Log.e(TAG, "SVG parse failed after aggressive sanitize: ${e2.message}; svg_head=${svgString.take(200)}")
+                                PainterResult.Error("androidsvg: ${e2.message}")
+                            },
+                            onSuccess = { picture ->
+                                android.util.Log.i(TAG, "SVG parse succeeded on attempt 2 (aggressive sanitize)")
+                                PainterResult.Success(SvgPainter(picture))
+                            }
+                        )
+                },
+                onSuccess = { picture ->
+                    PainterResult.Success(SvgPainter(picture))
+                }
+            )
     }
 
     /** Parse SVG string to Android Picture. */
