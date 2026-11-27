@@ -55,6 +55,7 @@ object LatexSvgPainter {
         val picture = Picture()
         val width = svg.getDocumentWidth().toInt()
         val height = svg.getDocumentHeight().toInt()
+        android.util.Log.d("LatexSvgPainter", "picture=${picture.width}x${picture.height} doc=${svg.documentWidth}x${svg.documentHeight} vb=${svg.documentViewBox}")
         val canvas = picture.beginRecording(width, height)
         svg.renderToCanvas(canvas)
         picture.endRecording()
@@ -67,6 +68,7 @@ object LatexSvgPainter {
      * - Remove width/height with ex units (rely on viewBox)
      * - Ensure viewBox is present
      * - Clean style attribute: remove vertical-align with ex units
+     * - If viewBox exists but width/height missing, write width/height from viewBox
      */
     private fun preprocessSvg(svg: String): String {
         var result = svg.trim()
@@ -87,14 +89,22 @@ object LatexSvgPainter {
         result = result.replace(Regex("""\swidth="[^"]*ex[^"]*""", RegexOption.IGNORE_CASE), "")
         result = result.replace(Regex("""\sheight="[^"]*ex[^"]*""", RegexOption.IGNORE_CASE), "")
 
-        // 3. Ensure viewBox exists (MathJax usually provides it)
-        if (!result.contains("viewBox", true)) {
-            // Try to extract width/height for viewBox
+        // 3. Ensure viewBox exists and extract width/height from it
+        val vbMatch = Regex("""viewBox\s*=\s*"([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)"""").find(result)
+        if (vbMatch != null) {
+            val w = vbMatch.groupValues[3]
+            val h = vbMatch.groupValues[4]
+            // Remove existing width/height (any unit), then insert width/height from viewBox
+            result = result.replace(Regex("""\swidth="[^"]*""", RegexOption.IGNORE_CASE), "")
+            result = result.replace(Regex("""\sheight="[^"]*""", RegexOption.IGNORE_CASE), "")
+            result = result.replaceFirst("<svg", "<svg width=\"$w\" height=\"$h\" ")
+        } else if (!result.contains("viewBox", true)) {
+            // Fallback: no viewBox, try to extract width/height
             val widthMatch = Regex("""width="([^"]+)"""").find(result)
             val heightMatch = Regex("""height="([^"]+)"""").find(result)
             val w = widthMatch?.groupValues?.get(1)?.toDoubleOrNull() ?: 100.0
             val h = heightMatch?.groupValues?.get(1)?.toDoubleOrNull() ?: 100.0
-            result = result.replaceFirst("<svg", "<svg viewBox=\"0 0 $w $h\"")
+            result = result.replaceFirst("<svg", "<svg viewBox=\"0 0 $w $h\" width=\"$w\" height=\"$h\"")
         }
 
         return result
@@ -114,7 +124,7 @@ object LatexSvgPainter {
             val heightMatch = Regex("""height="([^"]+)"""").find(result)
             val w = widthMatch?.groupValues?.get(1)?.toDoubleOrNull() ?: 100.0
             val h = heightMatch?.groupValues?.get(1)?.toDoubleOrNull() ?: 100.0
-            result = result.replaceFirst("<svg", "<svg viewBox=\"0 0 $w $h\"")
+            result = result.replaceFirst("<svg", "<svg viewBox=\"0 0 $w $h\" width=\"$w\" height=\"$h\"")
         }
         return result
     }
@@ -150,6 +160,10 @@ object LatexSvgPainter {
         }
 
         override val intrinsicSize: Size
-            get() = Size(picture.width.toFloat(), picture.height.toFloat())
+            get() {
+                val w = if (picture.width > 0) picture.width.toFloat() else 120f
+                val h = if (picture.height > 0) picture.height.toFloat() else 60f
+                return Size(w, h)
+            }
     }
 }
