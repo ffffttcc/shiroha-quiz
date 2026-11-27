@@ -2,17 +2,16 @@ package com.yiqiu.shirohaquiz.ui.text.latex
 
 import android.graphics.Bitmap
 import android.graphics.Color
-import android.graphics.Picture
+import android.graphics.Matrix
 import android.util.LruCache
 import android.util.Log
-import com.caverock.androidsvg.SVG
-import com.caverock.androidsvg.SVGParseException
 import kotlin.collections.LinkedHashMap
 import kotlin.ranges.coerceAtLeast
 
 /**
  * SVG → Bitmap 渲染器（单一写入者，替代 LatexSvgPainter 的两套尺寸逻辑）。
- * 线程安全：内部 LruCache + AndroidSVG 无状态解析，可多线程并发调用。
+ * 内部使用 SvgPathRenderer（纯 Android 实现，无 androidsvg 依赖）。
+ * 线程安全：内部 LruCache + 无状态解析，可多线程并发调用。
  */
 object LatexSvgRenderer {
     private const val TAG = "LatexRender"
@@ -29,7 +28,7 @@ object LatexSvgRenderer {
     }
 
     /**
-     * 清洗后的 SVG 数据类（供单测/调试复用）。
+     * SVG 清洗后的数据类（供单测/调试复用）。
      */
     data class SanitizedSvg(
         val cleaned: String,
@@ -61,30 +60,12 @@ object LatexSvgRenderer {
         Log.d(TAG, "vb=${vbW.toInt()}x${vbH.toInt()} targetH=$targetHeightPx bitmap=${targetWidthPx}x$targetHeight")
 
         return try {
-            val svg = SVG.getFromString(cleaned)
-            // 首选：renderToPicture(w, h) —— 直接产出 Picture，尺寸由我们控制
-            val picture: Picture = try {
-                val method = SVG::class.java.getMethod("renderToPicture", Int::class.java, Int::class.java)
-                method.invoke(svg, targetWidthPx, targetHeight) as Picture
-            } catch (e: NoSuchMethodException) {
-                // 兜底：旧版本用 setDocumentWidth/Height + beginRecording
-                svg.setDocumentWidth(targetWidthPx.toFloat())
-                svg.setDocumentHeight(targetHeight.toFloat())
-                val pic = Picture()
-                val canvas = pic.beginRecording(targetWidthPx, targetHeight)
-                svg.renderToCanvas(canvas)
-                pic.endRecording()
-                pic
+            // 使用自研 SvgPathRenderer 替代 androidsvg
+            val bitmap = SvgPathRenderer.renderToBitmap(cleaned, targetHeightPx, Color.BLACK)
+            if (bitmap != null) {
+                cache.put(cacheKey, bitmap)
             }
-
-            val bitmap = Bitmap.createBitmap(targetWidthPx, targetHeight, Bitmap.Config.ARGB_8888)
-            val canvas = android.graphics.Canvas(bitmap)
-            picture.draw(canvas)
-            cache.put(cacheKey, bitmap)
             bitmap
-        } catch (e: SVGParseException) {
-            Log.e(TAG, "render fail: SVGParseException: ${e.message}")
-            null
         } catch (e: Exception) {
             Log.e(TAG, "render fail: ${e.javaClass.simpleName}: ${e.message}")
             null
@@ -145,13 +126,12 @@ object LatexSvgRenderer {
         cleaned = cleaned.replace("currentColor", String.format("#%06X", (0xFFFFFF and colorArgb)))
 
         // 自检：确保 xmlns 存在且引号成对
-        val xmlnsCount = "xmlns=\"http://www.w3.org/2000/svg\"".count { it == '"' }
-        if (!cleaned.contains("xmlns=\"http://www.w3.org/2000/svg\"") || xmlnsCount != 2) {
+        if (!cleaned.contains("xmlns=\"http://www.w3.org/2000/svg\"")) {
             Log.e("LatexRender", "HEAD_MALFORMED: xmlns missing or malformed in head: $newHead")
             // 仍尝试继续，但记录诊断
         }
 
-        return SanitizedSvg(newHead + body, vbW.toFloat(), vbH.toFloat())
+        return SanitizedSvg(cleaned, vbW.toFloat(), vbH.toFloat())
     }
 
     /**
