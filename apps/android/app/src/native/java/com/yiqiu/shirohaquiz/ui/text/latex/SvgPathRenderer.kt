@@ -261,7 +261,7 @@ object SvgPathRenderer {
         }
 
         // 1. Entry
-        dbgLog("ENTRY: svg.length=${svgStr.length}, head120=${svgStr.take(120).replace('\n', '\\n')}")
+        dbgLog("ENTRY: svg.length=${svgStr.length}, head120=${svgStr.take(120).replace("\n", "\\n")}")
         val cacheKey = "$svgStr|$targetHeightPx|$colorArgb"
         cache.get(cacheKey)?.let { return it }
 
@@ -321,7 +321,7 @@ object SvgPathRenderer {
                     if (!path.isEmpty) {
                         canvas.drawPath(path, paint)
                         drawn = true
-                        dbgLog("path#$idx points=${path.pointCount}")
+                        dbgLog("path#$idx points=${pathData.commands.sumOf { it.args.size / 2 }}")
                     } else {
                         dbgLog("path#$idx EMPTY")
                     }
