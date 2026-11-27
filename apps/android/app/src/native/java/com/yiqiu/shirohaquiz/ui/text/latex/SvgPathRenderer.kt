@@ -249,6 +249,19 @@ object SvgPathRenderer {
         targetHeightPx: Int,
         colorArgb: Int = Color.BLACK
     ): Bitmap? {
+        // Debug logging setup
+        val dbg = StringBuilder()
+        fun dbgLog(s: String) { dbg.appendLine(s) }
+        fun flushDbg(tag: String) {
+            runCatching {
+                val f = java.io.File("/data/data/com.reqir.shirohaquiz/files/svgpath_debug.txt")
+                f.parentFile?.mkdirs()
+                f.appendText("=== $tag @ ${System.currentTimeMillis()} ===\n$dbg\n")
+            }
+        }
+
+        // 1. Entry
+        dbgLog("ENTRY: svg.length=${svgStr.length}, head120=${svgStr.take(120).replace('\n', '\\n')}")
         val cacheKey = "$svgStr|$targetHeightPx|$colorArgb"
         cache.get(cacheKey)?.let { return it }
 
@@ -256,17 +269,29 @@ object SvgPathRenderer {
             val parser = SvgParser(svgStr)
             parser.parse()
 
-            // 1) viewBox
+            // 2. viewBox
             val vb = parser.viewBox
             if (vb.width() <= 0 || vb.height() <= 0) {
+                dbgLog("viewBox parse FAILED: $vb")
+                flushDbg("viewBox_FAIL")
                 Log.e(TAG, "Invalid viewBox: $vb")
                 return null
             }
+            dbgLog("viewBox: minX=${vb.left}, minY=${vb.top}, W=${vb.width()}, H=${vb.height()}")
 
-            // 2) scale
+            // 3. scale, bitmap dimensions
             val scale = targetHeightPx.toFloat() / vb.height()
             val bitmapWidth = (vb.width() * scale).roundToInt().coerceAtLeast(1)
             val bitmapHeight = targetHeightPx.coerceAtLeast(1)
+            dbgLog("targetHeightPx=$targetHeightPx, bitmapW=$bitmapWidth, bitmapH=$bitmapHeight, scale=$scale")
+
+            // 4. path count and d lengths
+            val pathCount = parser.paths.size
+            dbgLog("paths found: $pathCount")
+            parser.paths.take(3).forEachIndexed { idx, pd ->
+                val dLen = pd.commands.sumOf { it.args.joinToString(" ").length }
+                dbgLog("  path#$idx d.len=$dLen")
+            }
 
             // 3) Bitmap
             val bitmap = Bitmap.createBitmap(bitmapWidth, bitmapHeight, Bitmap.Config.ARGB_8888)
@@ -290,23 +315,38 @@ object SvgPathRenderer {
             }
 
             var drawn = false
-            for (pathData in parser.paths) {
-                val path = buildPath(pathData.commands, pathData.transform, baseMatrix)
-                if (!path.isEmpty) {
-                    canvas.drawPath(path, paint)
-                    drawn = true
+            for ((idx, pathData) in parser.paths.withIndex()) {
+                try {
+                    val path = buildPath(pathData.commands, pathData.transform, baseMatrix)
+                    if (!path.isEmpty) {
+                        canvas.drawPath(path, paint)
+                        drawn = true
+                        dbgLog("path#$idx points=${path.pointCount}")
+                    } else {
+                        dbgLog("path#$idx EMPTY")
+                    }
+                } catch (e: Exception) {
+                    val stack = e.stackTrace.take(5).joinToString("\n") { it.toString() }
+                    dbgLog("path#$idx EXCEPTION: ${e.javaClass.simpleName}: ${e.message}\n$stack")
                 }
             }
 
             if (!drawn) {
+                dbgLog("return null reason=No paths drawn")
+                flushDbg("NO_PATHS_DRAWN")
                 Log.w(TAG, "No paths drawn")
                 bitmap.recycle()
                 return null
             }
 
             cache.put(cacheKey, bitmap)
+            dbgLog("bitmap created ${bitmap.width}x${bitmap.height}")
+            flushDbg("SUCCESS")
             bitmap
         } catch (e: Exception) {
+            val stack = e.stackTrace.take(5).joinToString("\n") { it.toString() }
+            dbgLog("EXCEPTION: ${e.javaClass.simpleName}: ${e.message}\n$stack")
+            flushDbg("EXCEPTION")
             Log.e(TAG, "Render failed", e)
             null
         }
