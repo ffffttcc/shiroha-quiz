@@ -3,10 +3,11 @@ package com.yiqiu.shirohaquiz
 import android.app.Application
 import android.content.Context
 import android.util.Log
+import androidx.core.io.readTextOrNull
+import androidx.lifecycle.lifecycleScope
 import com.yiqiu.shirohaquiz.ui.text.latex.LatexEngine
 import com.yiqiu.shirohaquiz.ui.text.latex.LatexSvgRenderer
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.lifecycle.lifecycleScope
 import kotlinx.coroutines.launch
 import java.io.File
 
@@ -91,7 +92,7 @@ class ShirohaApplication : Application() {
                         pngFile.outputStream().use { bmp.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) }
                     }
                     
-                    val errorMsg = if (bmpWVal > 0 && bmpHVal > 0) null else "render returned null bitmap"
+                    val errorMsg: String? = if (bmpWVal > 0 && bmpHVal > 0) null else "render returned null bitmap"
                     
                     // 写诊断
                     val sb = StringBuilder()
@@ -100,7 +101,6 @@ class ShirohaApplication : Application() {
                     sb.appendLine("  sanitizedHead=${sanitizedResult.cleaned.take(160)}")
                     sb.appendLine("  vb=${sanitizedResult.vbWidth}x${sanitizedResult.vbHeight} targetH=56 bitmap=${bmp?.width}x${bmp?.height}")
                     sb.appendLine("  error=$errorMsg")
-                    val diag = sb.toString()
                     
                     // 写入诊断文件
                     File(filesDir, "latex_selftest.txt").writeText(
