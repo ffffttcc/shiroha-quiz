@@ -2,10 +2,11 @@ package com.yiqiu.shirohaquiz.ui.components
 
 import android.graphics.Bitmap
 import android.graphics.Color as AndroidColor
+import androidx.annotation.OptIn
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.experimental.FlowRow
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.maxWidth
 import androidx.compose.foundation.layout.width
@@ -25,6 +26,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.yiqiu.shirohaquiz.ui.text.latex.LatexWebViewRenderer
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun LatexText(
     text: String,
@@ -55,8 +57,8 @@ fun LatexText(
                     )
                 }
                 is Segment.Formula -> {
-                    val bmp by remember { mutableStateOf<Bitmap?>(null) }
-                    val err by remember { mutableStateOf<String?>(null) }
+                    var bmp by remember { mutableStateOf<Bitmap?>(null) }
+                    var err by remember { mutableStateOf<String?>(null) }
                     
                     LaunchedEffect(seg.tex, renderer) {
                         bmp = null
@@ -120,9 +122,7 @@ internal fun splitLatex(text: String): List<Segment> {
     while (i < len) {
         val ch = text[i]
         if (ch == '$') {
-            // Check for $$ (display math) or $ (inline)
             if (i + 1 < len && text[i + 1] == '$') {
-                // Display math: $$...$$
                 if (plainBuf.isNotEmpty()) {
                     result.add(Segment.Plain(plainBuf.toString()))
                     plainBuf.clear()
@@ -141,12 +141,10 @@ internal fun splitLatex(text: String): List<Segment> {
                     i++
                 }
                 if (!found) {
-                    // Unclosed $$, treat remaining as plain text
                     plainBuf.append("$$").append(text.substring(texStart))
                     break
                 }
             } else {
-                // Inline math: $...$
                 if (plainBuf.isNotEmpty()) {
                     result.add(Segment.Plain(plainBuf.toString()))
                     plainBuf.clear()
@@ -165,7 +163,6 @@ internal fun splitLatex(text: String): List<Segment> {
                     i++
                 }
                 if (!found) {
-                    // Unclosed $, treat as plain text
                     plainBuf.append("$").append(text.substring(texStart))
                     break
                 }
@@ -180,7 +177,6 @@ internal fun splitLatex(text: String): List<Segment> {
         result.add(Segment.Plain(plainBuf.toString()))
     }
     
-    // Merge consecutive Plain segments
     val merged = mutableListOf<Segment>()
     for (seg in result) {
         if (seg is Segment.Plain) {
