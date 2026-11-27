@@ -1,6 +1,9 @@
 package com.yiqiu.shirohaquiz
 
 import android.os.Bundle
+import android.util.Log
+import android.view.ViewGroup
+import android.widget.FrameLayout
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.animation.AnimatedVisibility
@@ -48,6 +51,7 @@ import androidx.core.view.WindowCompat
 import com.yiqiu.shirohaquiz.document.DocumentRecognitionManager
 import com.yiqiu.shirohaquiz.state.QuizRepository
 import com.yiqiu.shirohaquiz.ui.app.ShirohaAppShell
+import com.yiqiu.shirohaquiz.ui.text.latex.LatexWebViewRenderer
 import com.yiqiu.shirohaquiz.ui.theme.ShirohaColors
 import com.yiqiu.shirohaquiz.ui.theme.ShirohaMotion
 import com.yiqiu.shirohaquiz.ui.theme.ShirohaQuizTheme
@@ -85,6 +89,73 @@ class MainActivity : ComponentActivity() {
                     ShirohaAppShell()
                 }
             }
+        }
+        scheduleLatexSelfTest()
+    }
+
+    private fun scheduleLatexSelfTest() {
+        window.decorView.postDelayed({
+            try {
+                val host = FrameLayout(this)
+                val root = window.decorView.rootView
+                val rootGroup = root as? ViewGroup
+                if (rootGroup == null) {
+                    writeSelfTest("ATTACH_FAILED: root not ViewGroup")
+                    return@postDelayed
+                }
+                rootGroup.addView(host, ViewGroup.LayoutParams(1, 1))
+                val renderer = LatexWebViewRenderer(this)
+                renderer.attach(host)
+                renderer.warmUp { ok ->
+                    Log.d("LatexRender", "selftest warmUp=$ok")
+                    if (!ok) {
+                        writeSelfTest("warmUp FAILED")
+                        renderer.release()
+                        return@warmUp
+                    }
+                    val formulas = listOf(
+                        "\\mathbf{B}_{12}", "\\mathrm{ED}_{50}", "\\mathrm{LD}_{50}/\\mathrm{ED}_{50}",
+                        "\\frac{\\mathrm{d}C}{\\mathrm{d}t}=-kC^{n}", "K^{+}", "pK_{a}",
+                        "\\sqrt{x^2+y^2}", "\\ce{H2SO4}", "\\alpha\\beta\\gamma",
+                        "\\int_0^1 x dx", "x_{i}^{2}", "\\sum_{n=1}^{\\infty}"
+                    )
+                    val dir = java.io.File(filesDir, "latex_png").apply { mkdirs() }
+                    val sb = StringBuilder()
+                    var done = 0
+                    var okCount = 0
+                    val t0 = System.currentTimeMillis()
+                    formulas.forEachIndexed { i, f ->
+                        renderer.render(f, 56, android.graphics.Color.BLACK) { bmp, err ->
+                            if (bmp != null) {
+                                okCount++
+                                runCatching {
+                                    java.io.File(dir, "%02d.png".format(i)).outputStream().use { os ->
+                                        bmp.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, os)
+                                    }
+                                }
+                                sb.appendLine("[#$i] ok ${bmp.width}x${bmp.height} tex=$f")
+                            } else {
+                                sb.appendLine("[#$i] FAIL err=$err tex=$f")
+                            }
+                            done++
+                            if (done == formulas.size) {
+                                sb.appendLine("total ok=$okCount/${formulas.size} costMs=${System.currentTimeMillis()-t0}")
+                                writeSelfTest(sb.toString())
+                                renderer.release()
+                            }
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                writeSelfTest("selftest EXCEPTION: ${e.javaClass.simpleName}: ${e.message}")
+            }
+        }, 1500)
+    }
+
+    private fun writeSelfTest(text: String) {
+        runCatching {
+            java.io.File(filesDir, "latex_selftest.txt").writeText(text)
+            Log.d("LatexRender", "selftest written, ${text.length} chars")
         }
     }
 
