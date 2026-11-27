@@ -230,7 +230,7 @@ fun LatexTestScreen(onBack: () -> Unit) {
                                 .fillMaxWidth()
                                 .height(72.dp)
                                 .padding(end = 16.dp)
-                                .background(Color(0xFF202020)),
+                                .background(Color.White),
                             contentAlignment = Alignment.Center
                         ) {
                             bmp?.let { bmp ->
