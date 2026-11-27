@@ -88,6 +88,9 @@ object SvgPathRenderer {
                 result.add(PathCmd(letter, args))
             }
         }
+        // Debug: log used command letters
+        val letters = result.map { it.letter }.distinct().joinToString("")
+        Log.d(TAG, "parsePathCommands: letters=$letters")
         return result
     }
 
@@ -388,6 +391,10 @@ object SvgPathRenderer {
     ) {
         var x = 0f
         var y = 0f
+        var lastCubicCtrlX = 0f
+        var lastCubicCtrlY = 0f
+        var lastQuadCtrlX = 0f
+        var lastQuadCtrlY = 0f
 
         for (cmd in commands) {
             val isRelative = cmd.letter.isLowerCase()
@@ -408,6 +415,9 @@ object SvgPathRenderer {
                         onPoint(pt[0], pt[1])
                         i += 2
                     }
+                    // Reset control points on move (SVG spec)
+                    lastCubicCtrlX = 0f; lastCubicCtrlY = 0f
+                    lastQuadCtrlX = 0f; lastQuadCtrlY = 0f
                 }
                 'L' -> {
                     while (i + 1 < args.size) {
@@ -458,6 +468,10 @@ object SvgPathRenderer {
                         val tx = if (isRelative) x + nx else nx
                         val ty = if (isRelative) y + ny else ny
 
+                        // Store second control point for S reflection
+                        lastCubicCtrlX = tx2
+                        lastCubicCtrlY = ty2
+
                         // Include control points in bbox (approximation, slightly enlarges bbox)
                         val pts = floatArrayOf(tx1, ty1, tx2, ty2, tx, ty)
                         localTransform.mapPoints(pts)
@@ -476,15 +490,23 @@ object SvgPathRenderer {
                         val nx = args[i + 2].toFloat()
                         val ny = args[i + 3].toFloat()
 
+                        // First control point = reflection of last cubic's second control point
+                        val tx1 = 2 * x - lastCubicCtrlX
+                        val ty1 = 2 * y - lastCubicCtrlY
                         val tx2 = if (isRelative) x + x2 else x2
                         val ty2 = if (isRelative) y + y2 else y2
                         val tx = if (isRelative) x + nx else nx
                         val ty = if (isRelative) y + ny else ny
 
-                        val pts = floatArrayOf(tx2, ty2, tx, ty)
+                        // Store this segment's second control point for next S
+                        lastCubicCtrlX = tx2
+                        lastCubicCtrlY = ty2
+
+                        val pts = floatArrayOf(tx1, ty1, tx2, ty2, tx, ty)
                         localTransform.mapPoints(pts)
                         onPoint(pts[0], pts[1])
                         onPoint(pts[2], pts[3])
+                        onPoint(pts[4], pts[5])
 
                         x = tx; y = ty
                         i += 4
@@ -502,6 +524,10 @@ object SvgPathRenderer {
                         val tx = if (isRelative) x + nx else nx
                         val ty = if (isRelative) y + ny else ny
 
+                        // Store control point for T reflection
+                        lastQuadCtrlX = tx1
+                        lastQuadCtrlY = ty1
+
                         val pts = floatArrayOf(tx1, ty1, tx, ty)
                         localTransform.mapPoints(pts)
                         onPoint(pts[0], pts[1])
@@ -516,12 +542,20 @@ object SvgPathRenderer {
                         val nx = args[i].toFloat()
                         val ny = args[i + 1].toFloat()
 
+                        // Control point = reflection of last quad's control point
+                        val tx1 = 2 * x - lastQuadCtrlX
+                        val ty1 = 2 * y - lastQuadCtrlY
                         val tx = if (isRelative) x + nx else nx
                         val ty = if (isRelative) y + ny else ny
 
-                        val pt = floatArrayOf(tx, ty)
-                        localTransform.mapPoints(pt)
-                        onPoint(pt[0], pt[1])
+                        // Store this end point as control point for next T
+                        lastQuadCtrlX = tx1
+                        lastQuadCtrlY = ty1
+
+                        val pts = floatArrayOf(tx1, ty1, tx, ty)
+                        localTransform.mapPoints(pts)
+                        onPoint(pts[0], pts[1])
+                        onPoint(pts[2], pts[3])
 
                         x = tx; y = ty
                         i += 2
@@ -546,6 +580,10 @@ object SvgPathRenderer {
         val path = Path()
         var x = 0f
         var y = 0f
+        var lastCubicCtrlX = 0f
+        var lastCubicCtrlY = 0f
+        var lastQuadCtrlX = 0f
+        var lastQuadCtrlY = 0f
 
         // Combine: first apply localTransform (from <g> ancestors), then baseMatrix (viewBox->canvas)
         // M = baseMatrix * localTransform  (apply local first, then base)
@@ -572,6 +610,9 @@ object SvgPathRenderer {
                         if (i == 0) path.moveTo(pt[0], pt[1]) else path.lineTo(pt[0], pt[1])
                         i += 2
                     }
+                    // Reset control points on move (SVG spec)
+                    lastCubicCtrlX = 0f; lastCubicCtrlY = 0f
+                    lastQuadCtrlX = 0f; lastQuadCtrlY = 0f
                 }
                 'L' -> {
                     while (i + 1 < args.size) {
@@ -622,6 +663,10 @@ object SvgPathRenderer {
                         val tx = if (isRelative) x + nx else nx
                         val ty = if (isRelative) y + ny else ny
 
+                        // Store second control point for S reflection
+                        lastCubicCtrlX = tx2
+                        lastCubicCtrlY = ty2
+
                         val pts = floatArrayOf(tx1, ty1, tx2, ty2, tx, ty)
                         combinedTransform.mapPoints(pts)
                         path.cubicTo(pts[0], pts[1], pts[2], pts[3], pts[4], pts[5])
@@ -631,22 +676,28 @@ object SvgPathRenderer {
                     }
                 }
                 'S' -> {
-                    // Smooth cubic: treat as line to end point for simplicity (MathJax rarely uses S)
+                    // Smooth cubic: first control point = reflection of previous cubic's second control point
                     while (i + 3 < args.size) {
                         val x2 = args[i].toFloat()
                         val y2 = args[i + 1].toFloat()
                         val nx = args[i + 2].toFloat()
                         val ny = args[i + 3].toFloat()
 
+                        // First control point = reflection of last cubic's second control point
+                        val tx1 = 2 * x - lastCubicCtrlX
+                        val ty1 = 2 * y - lastCubicCtrlY
                         val tx2 = if (isRelative) x + x2 else x2
                         val ty2 = if (isRelative) y + y2 else y2
                         val tx = if (isRelative) x + nx else nx
                         val ty = if (isRelative) y + ny else ny
 
-                        val pts = floatArrayOf(tx2, ty2, tx, ty)
+                        // Store this segment's second control point for next S
+                        lastCubicCtrlX = tx2
+                        lastCubicCtrlY = ty2
+
+                        val pts = floatArrayOf(tx1, ty1, tx2, ty2, tx, ty)
                         combinedTransform.mapPoints(pts)
-                        // Approximate: line to end
-                        path.lineTo(pts[2], pts[3])
+                        path.cubicTo(pts[0], pts[1], pts[2], pts[3], pts[4], pts[5])
 
                         x = tx; y = ty
                         i += 4
@@ -664,6 +715,10 @@ object SvgPathRenderer {
                         val tx = if (isRelative) x + nx else nx
                         val ty = if (isRelative) y + ny else ny
 
+                        // Store control point for T reflection
+                        lastQuadCtrlX = tx1
+                        lastQuadCtrlY = ty1
+
                         val pts = floatArrayOf(tx1, ty1, tx, ty)
                         combinedTransform.mapPoints(pts)
                         path.quadTo(pts[0], pts[1], pts[2], pts[3])
@@ -673,17 +728,24 @@ object SvgPathRenderer {
                     }
                 }
                 'T' -> {
-                    // Smooth quadratic: treat as line to end point
+                    // Smooth quadratic: control point = reflection of previous quad's control point
                     while (i + 1 < args.size) {
                         val nx = args[i].toFloat()
                         val ny = args[i + 1].toFloat()
 
+                        // Control point = reflection of last quad's control point
+                        val tx1 = 2 * x - lastQuadCtrlX
+                        val ty1 = 2 * y - lastQuadCtrlY
                         val tx = if (isRelative) x + nx else nx
                         val ty = if (isRelative) y + ny else ny
 
-                        val pt = floatArrayOf(tx, ty)
-                        combinedTransform.mapPoints(pt)
-                        path.lineTo(pt[0], pt[1])
+                        // Store this end point as control point for next T
+                        lastQuadCtrlX = tx1
+                        lastQuadCtrlY = ty1
+
+                        val pts = floatArrayOf(tx1, ty1, tx, ty)
+                        combinedTransform.mapPoints(pts)
+                        path.quadTo(pts[0], pts[1], pts[2], pts[3])
 
                         x = tx; y = ty
                         i += 2
