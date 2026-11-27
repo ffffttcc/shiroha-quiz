@@ -234,7 +234,7 @@ object SvgPathRenderer {
         val pattern = Regex("""(\w+)\s*\(([^)]+)\)""")
         for (match in pattern.findAll(transformStr)) {
             val fn = match.groupValues[1]
-            val args = match.groupValues[2].split(Regex("""[\s,]+""")).filter { it.isNotBlank() }.map { it.toFloat() }
+            val args = match.groupValues[2].split(Regex("""[\\s,]+""")).filter { it.isNotBlank() }.map { it.toFloat() }
             val m = Matrix()
             when (fn) {
                 "translate" -> {
@@ -282,7 +282,7 @@ object SvgPathRenderer {
                 val start = i
                 while (i < d.length && !d[i].isLetter()) i++
                 val argsStr = d.substring(start, i).trim()
-                val args = if (argsStr.isBlank()) emptyList() else argsStr.split(Regex("""[\s,]+""")).filter { it.isNotBlank() }
+                val args = if (argsStr.isBlank()) emptyList() else argsStr.split(Regex("""[\\s,]+""")).filter { it.isNotBlank() }
                 result.add(PathCmd(c, args))
             } else {
                 i++
@@ -330,7 +330,7 @@ object SvgPathRenderer {
 
                         if (tag == "svg") {
                             val vbStr = parser.getAttributeValue(null, "viewBox") ?: "0 0 100 100"
-                            val parts = vbStr.split(Regex("""[\s,]+""")).map { it.toFloat() }
+                            val parts = vbStr.split(Regex("""[\\s,]+""")).map { it.toFloat() }
                             if (parts.size >= 4) {
                                 viewBox.set(parts[0], parts[1], parts[0] + parts[2], parts[1] + parts[3])
                             }
@@ -364,7 +364,7 @@ object SvgPathRenderer {
                     val start = i
                     while (i < d.length && !d[i].isLetter()) i++
                     val argsStr = d.substring(start, i).trim()
-                    val args = if (argsStr.isBlank()) emptyList() else argsStr.split(Regex("""[\s,]+""")).filter { it.isNotBlank() }
+                    val args = if (argsStr.isBlank()) emptyList() else argsStr.split(Regex("""[\\s,]+""")).filter { it.isNotBlank() }
                     result.add(PathCmd(c, args))
                 } else {
                     i++
