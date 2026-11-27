@@ -7,6 +7,7 @@ import android.util.LruCache
 import android.util.Log
 import com.caverock.androidsvg.SVG
 import com.caverock.androidsvg.SVGParseException
+import kotlin.collections.LinkedHashMap
 import kotlin.ranges.coerceAtLeast
 
 /**
@@ -94,57 +95,68 @@ object LatexSvgRenderer {
      * 纯函数清洗链（固定顺序、幂等、每步独立）。
      * 返回 SanitizedSvg(cleaned, vbWidth, vbHeight)
      */
-    internal fun sanitize(svg: String, colorArgb: Int): SanitizedSvg {
-        var result = svg.trim()
+    internal fun sanitize(svgRaw: String, colorArgb: Int): SanitizedSvg {
         val colorHex = String.format("#%06X", (0xFFFFFF and colorArgb))
 
-        // a) 根 <svg> 的 style 里删除含 vertical-align 的声明（androidsvg 不支持 ex）
-        result = result.replace(Regex("""<svg(\s[^>]*)?>""")) { match ->
-            val tag = match.groupValues[0]
-            val styleMatch = Regex("""style\s*=\s*"([^"]*)"""").find(tag)
-            if (styleMatch != null) {
-                val styleContent = styleMatch.groupValues[1]
-                val kept = styleContent
-                    .split(";")
-                    .map { it.trim() }
-                    .filter { it.isNotEmpty() && !it.contains("vertical-align", true) }
-                    .joinToString("; ")
-                val newStyle = if (kept.isEmpty()) "" else """style="$kept""""
-                tag.replace(styleMatch.groupValues[0], newStyle)
-            } else tag
+        // 1. 只切出根标签 <svg ...>
+        val openStart = svgRaw.indexOf("<svg")
+        if (openStart < 0) {
+            Log.e("LatexRender", "sanitize: no <svg tag found, svg_raw_head=${svgRaw.take(200)}")
+            return SanitizedSvg(svgRaw, 1608f, 836f)
+        }
+        val openEnd = svgRaw.indexOf('>', openStart)
+        if (openEnd < 0) {
+            Log.e("LatexRender", "sanitize: no closing > for <svg, svg_raw_head=${svgRaw.take(200)}")
+            return SanitizedSvg(svgRaw, 1608f, 836f)
+        }
+        val head = svgRaw.substring(0, openEnd + 1)     // 含 '>'
+        val body = svgRaw.substring(openEnd + 1)        // 其余内容原样保留
+        val attrArea = head.substring(4, head.length - 1) // 去掉 "<svg" 和 ">"
+
+        // 2. 解析成有序列属性表（保持顺序，避免重复）
+        val attrs = LinkedHashMap<String, String>()
+        Regex("""([\w:-]+)\s*=\s*"([^"]*)"""").findAll(attrArea).forEach { attrs[it.groupValues[1]] = it.groupValues[2] }
+
+        // 3. 独立解析本条的 viewBox
+        val vb = attrs["viewBox"]?.split(Regex("""[\s,]+"""))?.mapNotNull { it.toFloatOrNull() }
+        val vbW = vb?.getOrNull(2) ?: 0f
+        val vbH = vb?.getOrNull(3) ?: 0f
+
+        // 4. 清洗属性
+        attrs.remove("style")            // vertical-align 等 ex 单位一律不要
+        attrs.remove("role"); attrs.remove("focusable")
+        attrs.keys.filter { it.startsWith("aria-") }.forEach { attrs.remove(it) }
+        attrs.remove("width")
+        attrs.remove("height")
+        if (vbW > 0 && vbH > 0) {
+            attrs["width"] = vbW.toInt().toString()
+            attrs["height"] = vbH.toInt().toString()
         }
 
-        // b) currentColor → #RRGGBB
-        result = result.replace("currentColor", colorHex)
-
-        // c) 用 viewBox 的 W/H 覆盖根 svg 的 width/height，写成纯数字
-        // 先提取 viewBox
-        var vbW = 1608f
-        var vbH = 836f
-        val vbMatch = Regex("""viewBox\s*=\s*"([^"]+)"""").find(result)
-        if (vbMatch != null) {
-            val parts = vbMatch.groupValues[1].trim().split("\\s+").filter { it.isNotEmpty() }
-            if (parts.size >= 4) {
-                vbW = parts[2].toFloat()
-                vbH = parts[3].toFloat()
-            }
+        // 5. 重组根标签（属性值统一双引号，绝不产生三引号）
+        val newHead = buildString {
+            append("<svg")
+            attrs.forEach { (k, v) -> append(" ").append(k).append("=\"").append(v).append("\"") }
+            append(">")
         }
-        // 删除旧 width/height，重写为纯数字
-        result = result.replace(Regex("""\swidth="[^"]*""", RegexOption.IGNORE_CASE), "")
-            .replace(Regex("""\sheight="[^"]*""", RegexOption.IGNORE_CASE), "")
-        // 确保 viewBox 存在
-        if (vbMatch == null) {
-            result = result.replaceFirst("<svg", "<svg viewBox=\"0 0 $vbW $vbH\"")
+        var cleaned = newHead + body
+
+        // 6. currentColor 只在属性值里替换（安全）
+        cleaned = cleaned.replace("currentColor", String.format("#%06X", (0xFFFFFF and colorArgb)))
+
+        // 自检：确保 xmlns 存在且引号成对
+        val xmlnsCount = "xmlns=\"http://www.w3.org/2000/svg\"".count { it == '"' }
+        if (!cleaned.contains("xmlns=\"http://www.w3.org/2000/svg\"") || xmlnsCount != 2) {
+            Log.e("LatexRender", "HEAD_MALFORMED: xmlns missing or malformed in head: $newHead")
+            // 仍尝试继续，但记录诊断
         }
-        result = result.replaceFirst("<svg", "<svg width=\"${vbW.toInt()}\" height=\"${vbH.toInt()}\"")
 
-        // d) 删 role / focusable / aria-*
-        result = result.replace(Regex("""\s(role|focusable|aria-[a-z-]+)\s*=\s*"[^"]*"""", RegexOption.IGNORE_CASE), "")
-
-        return SanitizedSvg(result, vbW, vbH)
+        return SanitizedSvg(newHead + body, vbW.toFloat(), vbH.toFloat())
     }
 
-    /** 清空缓存并回收 Bitmap */
+    /**
+     * 清空缓存并回收 Bitmap
+     */
     fun clearCache() {
         cache.snapshot().forEach { (_, bmp) -> bmp.recycle() }
         cache.evictAll()
