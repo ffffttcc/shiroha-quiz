@@ -35,6 +35,7 @@ import com.yiqiu.shirohaquiz.ui.text.latex.LatexSvgRenderer
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.runtime.LaunchedEffect
+import java.io.File
 
 /**
  * Test screen for LaTeX rendering engine (PoC).
@@ -71,18 +72,96 @@ fun LatexTestScreen(onBack: () -> Unit) {
             val svgResult = LatexEngine.renderSvgString(latex)
             val bitmap: ImageBitmap?
             val error: String?
+            val svgOk: Boolean
+            val svgLen: Int
+            val svgHead: String
+            val sanitizedHead: String
+            val vbW: Float
+            val vbH: Float
+            val targetH: Int
+            val bmpW: Int
+            val bmpH: Int
+            val errorMsg: String?
+
+            val svgResult = LatexEngine.renderSvgString(latex)
             if (svgResult.isSuccess) {
-                val svg = svgResult.getOrNull()
-                val bmp = svg?.let { LatexSvgRenderer.render(it, targetHeight) }
-                bitmap = bmp?.let { it.asImageBitmap() }
-                error = null
+                val svg = svgResult.getOrNull() ?: ""
+                val svgOkFlag = !svg.isBlank()
+                val svgLenVal = svg.length
+                val svgHeadVal = svg.take(200)
+                
+                // Get sanitized SVG info from LatexSvgRenderer.sanitize
+                val sanitizedResult = com.yiqiu.shirohaquiz.ui.text.latex.LatexSvgRenderer.sanitize(
+                    svg, 
+                    android.graphics.Color.BLACK
+                )
+                val sanitizedHeadVal = sanitizedResult.cleaned.take(160)
+                val vbWVal = sanitizedResult.vbWidth
+                val vbHVal = sanitizedResult.vbHeight
+                val targetHVal = 56 // targetHeight will be passed
+                
+                val bmp = if (!svg.isBlank()) {
+                    LatexSvgRenderer.render(svg, 56, android.graphics.Color.BLACK)
+                } else null
+                val bitmap = bmp?.let { it.asImageBitmap() }
+                val bmpWVal = bitmap?.width ?: 0
+                val bmpHVal = bitmap?.height ?: 0
+                
+                val errorMsg: String? = if (bmpWVal > 0 && bmpHVal > 0) null else "render returned null bitmap"
+                
+                FormulaResult(
+                    latex = latex,
+                    bitmap = bmp?.let { it.asImageBitmap() },
+                    renderError = if (bmpWVal > 0 && bmpHVal > 0) null else "render returned null bitmap",
+                    svgOk = svgOkFlag,
+                    svgLen = svg.length,
+                    svgHead = svg.take(200),
+                    sanitizedHead = sanitizedResult.cleaned.take(160),
+                    vbW = sanitizedResult.vbWidth,
+                    vbH = sanitizedResult.vbHeight,
+                    targetH = 56,
+                    bmpW = bmpWVal,
+                    bmpH = bmpHVal,
+                    error = if (bmpWVal > 0 && bmpHVal > 0) null else "render returned null bitmap"
+                )
             } else {
-                bitmap = null
-                error = svgResult.exceptionOrNull()?.message ?: "Unknown error"
+                val errMsg = svgResult.exceptionOrNull()?.message ?: "Unknown error"
+                FormulaResult(
+                    latex = latex,
+                    bitmap = null,
+                    renderError = "SVG error: $errMsg",
+                    svgOk = false,
+                    svgLen = 0,
+                    svgHead = "",
+                    sanitizedHead = "",
+                    vbW = 0f,
+                    vbH = 0f,
+                    targetH = 56,
+                    bmpW = 0,
+                    bmpH = 0,
+                    error = "SVG error: $errMsg"
+                )
             }
-            FormulaResult(latex, bitmap, error)
         }
         results = rendered
+        
+        // Write self-test file
+        val sb = StringBuilder()
+        sb.appendLine("engine=${LatexEngine.isReady()} initMs=$initTimeMs")
+        sb.appendLine("targetHeightPx=56")
+        for (i in results.indices) {
+            val r = results[i]
+            sb.appendLine("[#$i] tex=${r.latex}")
+            sb.appendLine("  okSvg=${r.svgOk} svgLen=${r.svgLen} svgHead=${r.svgHead}")
+            sb.appendLine("  sanitizedHead=${r.sanitizedHead}")
+            sb.appendLine("  vb=${r.vbW}x${r.vbH} targetH=${r.targetH} bitmap=${r.bmpW}x${r.bmpH}")
+            sb.appendLine("  error=${r.error}")
+        }
+        try {
+            File(context.filesDir, "latex_selftest.txt").writeText(sb.toString())
+        } catch (e: Exception) {
+            android.util.Log.e("LatexTestScreen", "Failed to write selftest file", e)
+        }
     }
 
     LaunchedEffect(targetHeightPx) {
@@ -167,7 +246,7 @@ fun LatexTestScreen(onBack: () -> Unit) {
                             contentAlignment = Alignment.Center
                         ) {
                             Text(
-                                text = "渲染失败: ${result.renderError ?: "Unknown"}",
+                                text = "渲染失败: ${result.renderError ?: "unknown(见自检文件)"}",
                                 fontSize = 12.sp,
                                 color = Color.Red,
                                 maxLines = 2,
@@ -205,5 +284,15 @@ fun LatexTestScreen(onBack: () -> Unit) {
 private data class FormulaResult(
     val latex: String,
     val bitmap: ImageBitmap?,
-    val renderError: String?
+    val renderError: String?,
+    val svgOk: Boolean = false,
+    val svgLen: Int = 0,
+    val svgHead: String = "",
+    val sanitizedHead: String = "",
+    val vbW: Float = 0f,
+    val vbH: Float = 0f,
+    val targetH: Int = 0,
+    val bmpW: Int = 0,
+    val bmpH: Int = 0,
+    val error: String? = null
 )
