@@ -94,62 +94,64 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun scheduleLatexSelfTest() {
-        window.decorView.postDelayed({
-            try {
-                val host = FrameLayout(this)
-                val root = window.decorView.rootView
-                val rootGroup = root as? ViewGroup
-                if (rootGroup == null) {
-                    writeSelfTest("ATTACH_FAILED: root not ViewGroup")
-                    return@postDelayed
-                }
-                rootGroup.addView(host, ViewGroup.LayoutParams(1, 1))
-                val renderer = LatexWebViewRenderer(this)
-                renderer.attach(host)
-                renderer.warmUp { ok ->
-                    Log.d("LatexRender", "selftest warmUp=$ok")
-                    if (!ok) {
-                        writeSelfTest("warmUp FAILED")
-                        renderer.release()
-                        return@warmUp
-                    }
-                    val formulas = listOf(
-                        "\\mathbf{B}_{12}", "\\mathrm{ED}_{50}", "\\mathrm{LD}_{50}/\\mathrm{ED}_{50}",
-                        "\\frac{\\mathrm{d}C}{\\mathrm{d}t}=-kC^{n}", "K^{+}", "pK_{a}",
-                        "\\sqrt{x^2+y^2}", "\\ce{H2SO4}", "\\alpha\\beta\\gamma",
-                        "\\int_0^1 x dx", "x_{i}^{2}", "\\sum_{n=1}^{\\infty}"
-                    )
-                    val dir = java.io.File(filesDir, "latex_png").apply { mkdirs() }
-                    val sb = StringBuilder()
-                    var done = 0
-                    var okCount = 0
-                    val t0 = System.currentTimeMillis()
-                    formulas.forEachIndexed { i, f ->
-                        renderer.render(f, 56, android.graphics.Color.BLACK) { bmp, err ->
-                            if (bmp != null) {
-                                okCount++
-                                runCatching {
-                                    java.io.File(dir, "%02d.png".format(i)).outputStream().use { os ->
-                                        bmp.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, os)
-                                    }
-                                }
-                                sb.appendLine("[#$i] ok ${bmp.width}x${bmp.height} tex=$f")
-                            } else {
-                                sb.appendLine("[#$i] FAIL err=$err tex=$f")
-                            }
-                            done++
-                            if (done == formulas.size) {
-                                sb.appendLine("total ok=$okCount/${formulas.size} costMs=${System.currentTimeMillis()-t0}")
-                                writeSelfTest(sb.toString())
-                                renderer.release()
-                            }
-                        }
-                    }
-                }
-            } catch (e: Exception) {
-                writeSelfTest("selftest EXCEPTION: ${e.javaClass.simpleName}: ${e.message}")
+        val host = FrameLayout(this)
+        val root = window.decorView.rootView
+        val rootGroup = root as? ViewGroup
+        if (rootGroup == null) {
+            writeSelfTest("ATTACH_FAILED: root not ViewGroup")
+            return
+        }
+        rootGroup.addView(host, ViewGroup.LayoutParams(1, 1))
+
+        val renderer = LatexWebViewRenderer(this)
+        renderer.attach(host)
+
+        renderer.warmUp { ok ->
+            Log.d("LatexRender", "selftest warmUp=$ok")
+            if (!ok) {
+                writeSelfTest("warmUp FAILED")
+                renderer.release()
+                rootGroup.removeView(host)
+                return@warmUp
             }
-        }, 1500)
+            val formulas = listOf(
+                "\\mathbf{B}_{12}", "\\mathrm{ED}_{50}", "\\mathrm{LD}_{50}/\\mathrm{ED}_{50}",
+                "\\frac{\\mathrm{d}C}{\\mathrm{d}t}=-kC^{n}", "K^{+}", "pK_{a}",
+                "\\sqrt{x^2+y^2}", "\\ce{H2SO4}", "\\alpha\\beta\\gamma",
+                "\\int_0^1 x dx", "x_{i}^{2}", "\\sum_{n=1}^{\\infty}"
+            )
+            val dir = java.io.File(filesDir, "latex_png").apply { mkdirs() }
+            val sb = StringBuilder()
+            val done = java.util.concurrent.atomic.AtomicInteger(0)
+            var okCount = 0
+            val t0 = System.currentTimeMillis()
+            formulas.forEachIndexed { i, f ->
+                renderer.render(f, 56, android.graphics.Color.BLACK) { bmp, err ->
+                    if (bmp != null) {
+                        okCount++
+                        val snapshot = bmp
+                        Thread {
+                            runCatching {
+                                java.io.File(dir, "%02d.png".format(i)).outputStream().use { os ->
+                                    snapshot.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, os)
+                                }
+                            }
+                        }.start()
+                        sb.appendLine("[#$i] ok ${bmp.width}x${bmp.height} tex=$f")
+                    } else {
+                        sb.appendLine("[#$i] FAIL err=$err tex=$f")
+                    }
+                    val currentDone = done.incrementAndGet()
+                    if (currentDone == formulas.size) {
+                        sb.appendLine("total ok=$okCount/${formulas.size} costMs=${System.currentTimeMillis()-t0}")
+                        writeSelfTest(sb.toString())
+                        java.io.File(filesDir, "latex_selftest.DONE").writeText("ok ${System.currentTimeMillis()}")
+                        renderer.release()
+                        rootGroup.removeView(host)
+                    }
+                }
+            }
+        }
     }
 
     private fun writeSelfTest(text: String) {
