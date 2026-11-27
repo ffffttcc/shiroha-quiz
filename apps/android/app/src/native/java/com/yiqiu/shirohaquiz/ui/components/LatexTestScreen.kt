@@ -69,14 +69,18 @@ fun LatexTestScreen(onBack: () -> Unit) {
 
         val rendered = formulas.map { latex ->
             val svgResult = LatexEngine.renderSvgString(latex)
-            val pair: Pair<ImageBitmap?, String?> = if (svgResult.isSuccess) {
+            val bitmap: ImageBitmap?
+            val error: String?
+            if (svgResult.isSuccess) {
                 val svg = svgResult.getOrNull()
                 val bmp = svg?.let { LatexSvgRenderer.render(it, targetHeight) }
-                bmp?.let { it.asImageBitmap() } to null
+                bitmap = bmp?.let { it.asImageBitmap() }
+                error = null
             } else {
-                null to svgResult.exceptionOrNull()?.message ?: "Unknown error"
+                bitmap = null
+                error = svgResult.exceptionOrNull()?.message ?: "Unknown error"
             }
-            FormulaResult(latex, pair.first, pair.second)
+            FormulaResult(latex, bitmap, error)
         }
         results = rendered
     }
