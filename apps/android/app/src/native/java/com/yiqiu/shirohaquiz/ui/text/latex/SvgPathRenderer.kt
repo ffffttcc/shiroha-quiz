@@ -279,13 +279,7 @@ object SvgPathRenderer {
             }
             dbgLog("viewBox: minX=${vb.left}, minY=${vb.top}, W=${vb.width()}, H=${vb.height()}")
 
-            // 3. scale, bitmap dimensions
-            val scale = targetHeightPx.toFloat() / vb.height()
-            val bitmapWidth = (vb.width() * scale).roundToInt().coerceAtLeast(1)
-            val bitmapHeight = targetHeightPx.coerceAtLeast(1)
-            dbgLog("targetHeightPx=$targetHeightPx, bitmapW=$bitmapWidth, bitmapH=$bitmapHeight, scale=$scale")
-
-            // 4. path count and d lengths
+            // 3. path count and d lengths
             val pathCount = parser.paths.size
             dbgLog("paths found: $pathCount")
             parser.paths.take(3).forEachIndexed { idx, pd ->
@@ -293,8 +287,43 @@ object SvgPathRenderer {
                 dbgLog("  path#$idx d.len=$dLen")
             }
 
-            // 3) Bitmap
-            val bitmap = Bitmap.createBitmap(bitmapWidth, bitmapHeight, Bitmap.Config.ARGB_8888)
+            // FIRST PASS: collect all transformed points to compute content bbox
+            // Points are transformed by localTransform (includes <g transform="scale(1,-1)">), NOT by baseMatrix
+            var minX = Float.MAX_VALUE
+            var minY = Float.MAX_VALUE
+            var maxX = -Float.MAX_VALUE
+            var maxY = -Float.MAX_VALUE
+            var hasPoints = false
+
+            for (pathData in parser.paths) {
+                collectTransformedPoints(pathData.commands, pathData.transform) { x, y ->
+                    hasPoints = true
+                    if (x < minX) minX = x
+                    if (y < minY) minY = y
+                    if (x > maxX) maxX = x
+                    if (y > maxY) maxY = y
+                }
+            }
+
+            // Fallback to viewBox if no points collected
+            if (!hasPoints) {
+                minX = vb.left
+                minY = vb.top
+                maxX = vb.right
+                maxY = vb.bottom
+            }
+
+            val bw = (maxX - minX).coerceAtLeast(1f)
+            val bh = (maxY - minY).coerceAtLeast(1f)
+            val s = targetHeightPx.toFloat() / bh                      // height fills target
+            val outW = (bw * s).roundToInt().coerceAtLeast(1)
+            val outH = targetHeightPx.coerceAtLeast(1)
+
+            dbgLog("bbox: minX=$minX, minY=$minY, maxX=$maxX, maxY=$maxY, bw=$bw, bh=$bh")
+            dbgLog("targetHeightPx=$targetHeightPx, outW=$outW, outH=$outH, scale=$s")
+
+            // 3) Bitmap - use bbox-derived dimensions
+            val bitmap = Bitmap.createBitmap(outW, outH, Bitmap.Config.ARGB_8888)
             val canvas = Canvas(bitmap)
             canvas.drawColor(Color.TRANSPARENT)
 
@@ -304,14 +333,12 @@ object SvgPathRenderer {
                 style = Paint.Style.FILL
             }
 
-            // 5) Base matrix: viewBox -> canvas
-            // viewBox: (minX, minY) top-left, Y up; Canvas: (0,0) top-left, Y down
-            // Transform: translate(-minX, -minY) -> scale(scale, scale) -> flip Y
+            // 5) Base matrix: content bbox -> canvas
+            // Path coordinates already include <g transform="scale(1,-1)"> from ancestors,
+            // so NO additional Y flip here. Just translate bbox to origin, then scale.
             val baseMatrix = Matrix().apply {
-                postTranslate(-vb.left, -vb.bottom)  // Move viewBox origin to (0,0)
-                postScale(scale, scale)               // Scale to target size
-                postScale(1f, -1f)                    // Flip Y (math coords -> canvas coords)
-                postTranslate(0f, bitmapHeight.toFloat()) // Flip Y back for canvas
+                postTranslate(-minX, -minY)
+                postScale(s, s)
             }
 
             var drawn = false
@@ -349,6 +376,164 @@ object SvgPathRenderer {
             flushDbg("EXCEPTION")
             Log.e(TAG, "Render failed", e)
             null
+        }
+    }
+
+    /** Collect all transformed points from path commands for bbox computation.
+     * Applies localTransform (includes <g> ancestors like scale(1,-1)), NOT baseMatrix. */
+    private fun collectTransformedPoints(
+        commands: List<PathCmd>,
+        localTransform: Matrix,
+        onPoint: (Float, Float) -> Unit
+    ) {
+        var x = 0f
+        var y = 0f
+
+        for (cmd in commands) {
+            val isRelative = cmd.letter.isLowerCase()
+            val letter = cmd.letter.uppercaseChar()
+            val args = cmd.args
+            var i = 0
+
+            when (letter) {
+                'M' -> {
+                    while (i + 1 < args.size) {
+                        val nx = args[i].toFloat()
+                        val ny = args[i + 1].toFloat()
+                        val tx = if (isRelative) x + nx else nx
+                        val ty = if (isRelative) y + ny else ny
+                        x = tx; y = ty
+                        val pt = floatArrayOf(tx, ty)
+                        localTransform.mapPoints(pt)
+                        onPoint(pt[0], pt[1])
+                        i += 2
+                    }
+                }
+                'L' -> {
+                    while (i + 1 < args.size) {
+                        val nx = args[i].toFloat()
+                        val ny = args[i + 1].toFloat()
+                        val tx = if (isRelative) x + nx else nx
+                        val ty = if (isRelative) y + ny else ny
+                        x = tx; y = ty
+                        val pt = floatArrayOf(tx, ty)
+                        localTransform.mapPoints(pt)
+                        onPoint(pt[0], pt[1])
+                        i += 2
+                    }
+                }
+                'H' -> {
+                    for (arg in args) {
+                        val nx = arg.toFloat()
+                        val tx = if (isRelative) x + nx else nx
+                        x = tx
+                        val pt = floatArrayOf(tx, y)
+                        localTransform.mapPoints(pt)
+                        onPoint(pt[0], pt[1])
+                    }
+                }
+                'V' -> {
+                    for (arg in args) {
+                        val ny = arg.toFloat()
+                        val ty = if (isRelative) y + ny else ny
+                        y = ty
+                        val pt = floatArrayOf(x, ty)
+                        localTransform.mapPoints(pt)
+                        onPoint(pt[0], pt[1])
+                    }
+                }
+                'C' -> {
+                    while (i + 5 < args.size) {
+                        val x1 = args[i].toFloat()
+                        val y1 = args[i + 1].toFloat()
+                        val x2 = args[i + 2].toFloat()
+                        val y2 = args[i + 3].toFloat()
+                        val nx = args[i + 4].toFloat()
+                        val ny = args[i + 5].toFloat()
+
+                        val tx1 = if (isRelative) x + x1 else x1
+                        val ty1 = if (isRelative) y + y1 else y1
+                        val tx2 = if (isRelative) x + x2 else x2
+                        val ty2 = if (isRelative) y + y2 else y2
+                        val tx = if (isRelative) x + nx else nx
+                        val ty = if (isRelative) y + ny else ny
+
+                        // Include control points in bbox (approximation, slightly enlarges bbox)
+                        val pts = floatArrayOf(tx1, ty1, tx2, ty2, tx, ty)
+                        localTransform.mapPoints(pts)
+                        onPoint(pts[0], pts[1])
+                        onPoint(pts[2], pts[3])
+                        onPoint(pts[4], pts[5])
+
+                        x = tx; y = ty
+                        i += 6
+                    }
+                }
+                'S' -> {
+                    while (i + 3 < args.size) {
+                        val x2 = args[i].toFloat()
+                        val y2 = args[i + 1].toFloat()
+                        val nx = args[i + 2].toFloat()
+                        val ny = args[i + 3].toFloat()
+
+                        val tx2 = if (isRelative) x + x2 else x2
+                        val ty2 = if (isRelative) y + y2 else y2
+                        val tx = if (isRelative) x + nx else nx
+                        val ty = if (isRelative) y + ny else ny
+
+                        val pts = floatArrayOf(tx2, ty2, tx, ty)
+                        localTransform.mapPoints(pts)
+                        onPoint(pts[0], pts[1])
+                        onPoint(pts[2], pts[3])
+
+                        x = tx; y = ty
+                        i += 4
+                    }
+                }
+                'Q' -> {
+                    while (i + 3 < args.size) {
+                        val x1 = args[i].toFloat()
+                        val y1 = args[i + 1].toFloat()
+                        val nx = args[i + 2].toFloat()
+                        val ny = args[i + 3].toFloat()
+
+                        val tx1 = if (isRelative) x + x1 else x1
+                        val ty1 = if (isRelative) y + y1 else y1
+                        val tx = if (isRelative) x + nx else nx
+                        val ty = if (isRelative) y + ny else ny
+
+                        val pts = floatArrayOf(tx1, ty1, tx, ty)
+                        localTransform.mapPoints(pts)
+                        onPoint(pts[0], pts[1])
+                        onPoint(pts[2], pts[3])
+
+                        x = tx; y = ty
+                        i += 4
+                    }
+                }
+                'T' -> {
+                    while (i + 1 < args.size) {
+                        val nx = args[i].toFloat()
+                        val ny = args[i + 1].toFloat()
+
+                        val tx = if (isRelative) x + nx else nx
+                        val ty = if (isRelative) y + ny else ny
+
+                        val pt = floatArrayOf(tx, ty)
+                        localTransform.mapPoints(pt)
+                        onPoint(pt[0], pt[1])
+
+                        x = tx; y = ty
+                        i += 2
+                    }
+                }
+                'Z' -> {
+                    // close path - no new points
+                }
+                else -> {
+                    // Unsupported command - ignore for bbox
+                }
+            }
         }
     }
 
