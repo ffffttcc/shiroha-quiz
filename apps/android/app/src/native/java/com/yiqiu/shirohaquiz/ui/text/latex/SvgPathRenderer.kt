@@ -64,8 +64,9 @@ object SvgPathRenderer {
                     }
                 }
             }
-            // postConcat applies in correct order: result.postConcat(m) = m * result
-            result.postConcat(m)
+            // preConcat for SVG spec order: transform="A B" means A then B => matrix = A * B
+            // Loop processes left-to-right, so result.preConcat(m) = result * m accumulates correctly
+            result.preConcat(m)
         }
         return result
     }
@@ -184,6 +185,7 @@ object SvgPathRenderer {
 
         val viewBox: RectF = RectF()
         val paths: MutableList<PathData> = mutableListOf()
+        val transformLogs: MutableList<String> = mutableListOf()  // debug: transform strings and matrices (max 5)
 
         fun parse() {
             val factory = XmlPullParserFactory.newInstance()
@@ -203,6 +205,11 @@ object SvgPathRenderer {
                         val parentMatrix = matrixStack.last()
                         val currentMatrix = if (transformStr != null) {
                             val m = parseTransform(transformStr)
+                            // Debug: log transform string and resulting matrix (first 5 only)
+                            if (transformLogs.size < 5) {
+                                val vals = m.values
+                                transformLogs.add("transform=\"$transformStr\" -> [${vals.joinToString(",")}]")
+                            }
                             val result = Matrix()
                             result.set(parentMatrix)
                             result.postConcat(m)
@@ -271,6 +278,9 @@ object SvgPathRenderer {
         return try {
             val parser = SvgParser(svgStr)
             parser.parse()
+
+            // Debug: log parsed transforms (max 5)
+            parser.transformLogs.forEach { dbgLog(it) }
 
             // 2. viewBox
             val vb = parser.viewBox
