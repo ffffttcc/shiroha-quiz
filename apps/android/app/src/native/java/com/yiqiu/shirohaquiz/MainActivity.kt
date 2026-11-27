@@ -59,6 +59,9 @@ import kotlinx.coroutines.delay
 import com.yiqiu.shirohaquiz.ui.text.latex.LatexEngine
 import com.yiqiu.shirohaquiz.ui.text.latex.LatexSvgRenderer
 import java.io.File
+import android.os.Handler
+import android.os.Looper
+import android.util.Log
 
 class MainActivity : ComponentActivity() {
     override fun onResume() {
@@ -234,5 +237,5 @@ class MainActivity : ComponentActivity() {
 
     private fun writeResult(msg: String) {
         writeResult(this, msg)
-    }}
+    }
 }
