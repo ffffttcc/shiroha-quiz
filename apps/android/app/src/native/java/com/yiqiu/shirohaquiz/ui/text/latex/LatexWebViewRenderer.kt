@@ -223,6 +223,7 @@ class LatexWebViewRenderer(private val activity: Activity) {
                         val unescaped = resultStr
                             .replace("\\\"", "\"")
                         val results = JSONArray(unescaped)
+                        var found = false
                         for (i in 0 until results.length()) {
                             val obj = results.getJSONObject(i)
                             val id = obj.getInt("id")
@@ -232,9 +233,11 @@ class LatexWebViewRenderer(private val activity: Activity) {
                                 } else if (obj.has("error")) {
                                     handleJsResult(id, null, "JS_ERROR:${obj.getString("error")}")
                                 }
-                                return@poll
+                                found = true
+                                break
                             }
                         }
+                        if (found) return@poll
                         // Our ID not in results yet, keep polling
                         handler.postDelayed(Runnable { poll() }, 50)
                     } catch (e: Exception) {
@@ -319,7 +322,7 @@ class LatexWebViewRenderer(private val activity: Activity) {
      * Must call from onDestroy / DisposableEffect onDispose.
      */
     fun release() {
-        scope.coroutineContext.cancel()
+        scope.cancel()
         handler.removeCallbacksAndMessages(null)
         webView?.apply {
             destroy()
