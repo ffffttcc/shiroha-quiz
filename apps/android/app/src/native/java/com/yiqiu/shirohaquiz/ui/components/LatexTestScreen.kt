@@ -48,10 +48,10 @@ fun LatexTestScreen(onBack: () -> Unit) {
     var initError by remember { mutableStateOf<String?>(null) }
     var results by remember { mutableStateOf<List<FormulaResult>>(emptyList()) }
 
-    // dp -> px 转换（Composable 上下文可用 LocalDensity）
-    val targetHeightPx = remember { LocalDensity.current.run { 56.dp.roundToPx() } }
+    // dp -> px 转换（Composable 上下文直接可用 LocalDensity）
+    val targetHeightPx = LocalDensity.current.run { 56.dp.roundToPx() }
 
-    fun renderFormulas() {
+    fun renderFormulas(targetHeight: Int) {
         val formulas = listOf(
             "\\mathbf{B}_{12}",
             "\\mathrm{ED}_{50}",
@@ -71,7 +71,7 @@ fun LatexTestScreen(onBack: () -> Unit) {
             val svgResult = LatexEngine.renderSvgString(latex)
             val pair: Pair<ImageBitmap?, String?> = if (svgResult.isSuccess) {
                 val svg = svgResult.getOrNull()
-                val bmp = svg?.let { LatexSvgRenderer.render(it, targetHeightPx) }
+                val bmp = svg?.let { LatexSvgRenderer.render(it, targetHeight) }
                 bmp?.let { it.asImageBitmap() } to null
             } else {
                 null to svgResult.exceptionOrNull()?.message ?: "Unknown error"
@@ -81,7 +81,7 @@ fun LatexTestScreen(onBack: () -> Unit) {
         results = rendered
     }
 
-    LaunchedEffect(true) {
+    LaunchedEffect(targetHeightPx) {
         if (!initDone) {
             LatexEngine.init(context)
             // Wait for init to complete
@@ -93,7 +93,7 @@ fun LatexTestScreen(onBack: () -> Unit) {
             initDone = true
 
             if (LatexEngine.isReady()) {
-                renderFormulas()
+                renderFormulas(targetHeightPx)
             }
         }
     }
