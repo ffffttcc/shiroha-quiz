@@ -56,19 +56,9 @@ import com.yiqiu.shirohaquiz.ui.theme.ShirohaMotion
 import com.yiqiu.shirohaquiz.ui.theme.ShirohaQuizTheme
 import com.yiqiu.shirohaquiz.util.LauncherIconSwitcher
 import kotlinx.coroutines.delay
-import android.os.Handler
-import android.os.Looper
-import android.util.Log
-import java.io.File
 import com.yiqiu.shirohaquiz.ui.text.latex.LatexEngine
 import com.yiqiu.shirohaquiz.ui.text.latex.LatexSvgRenderer
 import java.io.File
-import android.os.Handler
-import android.os.Looper
-import java.io.File
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
-import android.util.Log
 
 class MainActivity : ComponentActivity() {
     override fun onResume() {
@@ -186,7 +176,7 @@ class MainActivity : ComponentActivity() {
                         val bmpWVal = bmp?.width ?: 0
                         val bmpHVal = bmp?.height ?: 0
 
-                        val errorMsg: String? = if (bmpWVal > 0 && bmpHVal > 0) null else "render returned null bitmap"
+                        val errorMsg: String? = if (bmp != null && bmp.width > 0 && bmp.height > 0) null else "render returned null bitmap"
 
                         // 存 PNG
                         if (bmp != null) {
