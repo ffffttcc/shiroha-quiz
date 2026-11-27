@@ -128,6 +128,8 @@ import com.yiqiu.shirohaquiz.ui.components.ShirohaHeader
 import com.yiqiu.shirohaquiz.ui.components.StatusChip
 import com.yiqiu.shirohaquiz.ui.theme.ShirohaSpacing
 import com.yiqiu.shirohaquiz.ui.text.LatexDisplayFormatter
+import com.yiqiu.shirohaquiz.ui.text.latex.LatexTextOrFallback
+import androidx.compose.ui.text.TextStyle
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -1281,27 +1283,29 @@ fun PracticeScreen(
                 }
             }
             Spacer(Modifier.height(12.dp))
-            val questionText = LatexDisplayFormatter.format(QuizRepository.displayQuestionText(question))
+            val questionRawText = QuizRepository.displayQuestionText(question)
             val questionProgressText = if (isBatchPractice) {
                 "第 $batchGroupNumber 组，第 ${QuizRepository.practiceIndex - batchGroupStart + 1} / $batchGroupTotal 题"
             } else {
                 "第 ${QuizRepository.practiceIndex + 1} / ${practiceQuestions.size} 题"
             }
-            Text(
-                text = questionText,
+            LatexTextOrFallback(
+                text = questionRawText,
                 modifier = (if (QuizRepository.screenReaderAssistEnabled) {
                     Modifier.semantics {
                         liveRegion = LiveRegionMode.Polite
-                        contentDescription = "$questionProgressText，${typeLabel(question.type)}。$questionText"
+                        contentDescription = "$questionProgressText，${typeLabel(question.type)}。$questionRawText"
                     }
                 } else {
                     Modifier
                 }).questionInkLayer(questionInk, "stem"),
-                style = MaterialTheme.typography.titleLarge.copy(
+                style = TextStyle(
                     fontSize = QuizRepository.questionFontSizeSp().sp,
-                    lineHeight = QuizRepository.questionLineHeightSp().sp
+                    lineHeight = QuizRepository.questionLineHeightSp().sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onSurface
                 ),
-                fontWeight = FontWeight.SemiBold
+                heightPx = QuizRepository.questionFontSizeSp()
             )
             if (question.images.isNotEmpty()) {
                 Spacer(Modifier.height(14.dp))
@@ -1624,7 +1628,15 @@ fun PracticeScreen(
                     question.type == QuestionType.SHORT -> "参考答案"
                     else -> "正确答案"
                 }
-                NoticeCard("$answerLabel：\n${LatexDisplayFormatter.format(answerText)}", warning = false)
+                LatexTextOrFallback(
+                text = "$answerLabel：
+$answerText",
+                style = TextStyle(
+                    fontSize = 14.sp,
+                    lineHeight = 20.sp,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+            )
                 Spacer(Modifier.height(8.dp))
                 Text(
                     text = "解析",
@@ -1633,14 +1645,17 @@ fun PracticeScreen(
                     fontWeight = FontWeight.SemiBold
                 )
                 Spacer(Modifier.height(4.dp))
-                Text(
-                    text = question.analysis.takeIf { it.isNotBlank() }
+                val analysisRaw = question.analysis.takeIf { it.isNotBlank() }
                         ?.let { practiceAnalysisForDisplay(it, displayOptions) }
                         ?.let(::formatAnalysisForDisplay)
-                        ?.let(LatexDisplayFormatter::format)
-                        ?: "暂无解析",
-                    style = MaterialTheme.typography.bodyMedium.copy(lineHeight = 23.sp),
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                    ?: "暂无解析"
+                LatexTextOrFallback(
+                    text = analysisRaw,
+                    style = TextStyle(
+                        fontSize = 14.sp,
+                        lineHeight = 23.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                 )
                 if (canShowSingleQuestionAiAnalysis) {
                     Spacer(Modifier.height(14.dp))
