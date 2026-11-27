@@ -2,7 +2,6 @@ package com.yiqiu.shirohaquiz.ui.text.latex
 
 import android.graphics.Bitmap
 import android.graphics.Color
-import android.graphics.Matrix
 import android.util.LruCache
 import android.util.Log
 import kotlin.collections.LinkedHashMap
