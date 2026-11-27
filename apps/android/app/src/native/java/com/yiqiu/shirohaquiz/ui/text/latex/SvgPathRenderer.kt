@@ -550,8 +550,8 @@ object SvgPathRenderer {
         // Combine: first apply localTransform (from <g> ancestors), then baseMatrix (viewBox->canvas)
         // M = baseMatrix * localTransform  (apply local first, then base)
         val combinedTransform = Matrix()
-        combinedTransform.set(baseMatrix)
-        combinedTransform.postConcat(localTransform)
+        combinedTransform.set(localTransform)
+        combinedTransform.postConcat(baseMatrix)   // M = base × local：先应用 SVG 内部变换，再映射到画布
 
         for (cmd in commands) {
             val isRelative = cmd.letter.isLowerCase()
