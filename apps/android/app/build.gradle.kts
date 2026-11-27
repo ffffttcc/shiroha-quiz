@@ -129,8 +129,6 @@ dependencies {
     // LaTeX rendering engine (PoC)
     add("nativeImplementation", "io.github.taoweiji.quickjs:quickjs-android:1.4.6")
     add("nativeImplementation", "com.caverock:androidsvg-aar:1.4")
-    // Also add to testNativeImplementation for Robolectric tests that compile native sources
-    add("testNativeImplementation", "com.caverock:androidsvg-aar:1.4")
     testImplementation("junit:junit:4.13.2")
     add("testNativeImplementation", "net.sf.kxml:kxml2:2.3.0")
     add("testNativeImplementation", "org.robolectric:robolectric:4.12.2")
