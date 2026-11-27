@@ -94,6 +94,9 @@ fun LatexTestScreen(onBack: () -> Unit) {
                 val bmpWVal = bmp?.width ?: 0
                 val bmpHVal = bmp?.height ?: 0
                 
+                // Log each bitmap generation for debugging
+                android.util.Log.d("LatexTestScreen", "idx=$i bmp=${bmp?.width}x${bmp?.height} vb=${sanitizedResult.vbWidth}x${sanitizedResult.vbHeight} error=$errorMsg")
+                
                 val errorMsg: String? = if (bmpWVal > 0 && bmpHVal > 0) null else "render returned null bitmap"
                 
                 FormulaResult(
@@ -226,7 +229,8 @@ fun LatexTestScreen(onBack: () -> Unit) {
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .height(72.dp)
-                                .padding(end = 16.dp),
+                                .padding(end = 16.dp)
+                                .background(Color(0xFF202020)),
                             contentAlignment = Alignment.Center
                         ) {
                             bmp?.let { bmp ->
@@ -235,8 +239,8 @@ fun LatexTestScreen(onBack: () -> Unit) {
                                     bitmap = bmp.asImageBitmap(),
                                     contentDescription = null,
                                     modifier = Modifier
-                                        .fillMaxWidth()
-                                        .heightIn(max = 72.dp),
+                                        .fillMaxSize()
+                                        .padding(4.dp),
                                     contentScale = ContentScale.Fit,
                                     alpha = 1f
                                 )

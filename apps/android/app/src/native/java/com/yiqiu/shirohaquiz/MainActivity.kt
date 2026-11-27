@@ -53,6 +53,12 @@ import com.yiqiu.shirohaquiz.ui.theme.ShirohaMotion
 import com.yiqiu.shirohaquiz.ui.theme.ShirohaQuizTheme
 import com.yiqiu.shirohaquiz.util.LauncherIconSwitcher
 import kotlinx.coroutines.delay
+import java.io.File
+import com.yiqiu.shirohaquiz.ui.text.latex.LatexEngine
+import com.yiqiu.shirohaquiz.ui.text.latex.LatexSvgRenderer
+import android.os.Handler
+import android.os.Looper
+import java.io.File
 
 class MainActivity : ComponentActivity() {
     override fun onResume() {
@@ -75,6 +81,10 @@ class MainActivity : ComponentActivity() {
         runCatching { com.yiqiu.shirohaquiz.sync.sync.SyncScheduler.schedule(applicationContext) }
         LauncherIconSwitcher.applyShirohaMode(applicationContext, QuizRepository.shirohaModeEnabled)
         applyStatusBarTheme(QuizRepository.darkThemeEnabled)
+        // 启动时延迟执行 LaTeX 自检（后台线程，不阻塞 UI）
+        Handler(Looper.getMainLooper()).postDelayed({
+            Thread { runSelfTest() }.start()
+        }, 800)
         setContent {
             val darkTheme = QuizRepository.darkThemeEnabled
             SideEffect {
@@ -256,3 +266,122 @@ private fun ShirohaSplashProgressBar(
         }
     }
 }
+
+    /**
+     * 启动时延迟执行 LaTeX 自检（后台线程，不阻塞 UI）
+     * 结果写入 filesDir/selftest/：00.png..11.png + latex_selftest.txt + DONE
+     */
+    private fun runSelfTest() {
+        Thread {
+            val tag = "LatexSelfTest"
+            val context = this@MainActivity
+            Log.i("LatexSelfTest", "Starting LaTeX self-test on app startup (delayed)")
+            try {
+                // 1. 初始化引擎（复用单例）
+                LatexEngine.init(context)
+                var retry = 0
+                while (!LatexEngine.isReady() && LatexEngine.getInitError() == null && retry < 100) {
+                    Thread.sleep(50)
+                    retry++
+                }
+                if (LatexEngine.getInitError() != null) {
+                    Log.e("LatexSelfTest", "Engine init failed: ${LatexEngine.getInitError()}")
+                    writeResult(context, "engine_init_failed: ${LatexEngine.getInitError()}")
+                    return
+                }
+                val initMs = LatexEngine.getInitTimeMs()
+                Log.i("LatexSelfTest", "Engine initialized in $initMs ms")
+
+                // 2. 渲染 12 条公式并存 PNG
+                val formulas = listOf(
+                    "\\mathbf{B}_{12}",
+                    "\\mathrm{ED}_{50}",
+                    "\\mathrm{LD}_{50}/\\mathrm{ED}_{50}",
+                    "\\frac{\\mathrm{d}C}{\\mathrm{d}t}=-kC^{n}",
+                    "K^{+}",
+                    "pK_{a}",
+                    "\\mathrm{pK}_{\\mathrm{a}_1}=1.2",
+                    "Ca^{2+}",
+                    "\\mathrm{Ox}_{1}",
+                    "\\rightleftharpoons",
+                    "1.8\\times10^{-5}",
+                    "K_{ZnY}^{\\prime}"
+                )
+
+                val dir = File(filesDir, "selftest").apply { mkdirs() }
+                val sb = StringBuilder()
+                sb.appendLine("engine=true initMs=${LatexEngine.getInitTimeMs()}")
+                sb.appendLine("targetHeightPx=56")
+
+                formulas.forEachIndexed { i, latex ->
+                    val svgResult = LatexEngine.renderSvgString(latex)
+                    if (svgResult.isSuccess) {
+                        val svg = svgResult.getOrNull() ?: ""
+                        val svgOkFlag = !svg.isBlank()
+                        val svgLenVal = svg.length
+                        val svgHeadVal = svg.take(200)
+
+                        val sanitizedResult = com.yiqiu.shirohaquiz.ui.text.latex.LatexSvgRenderer.sanitize(
+                            svg,
+                            android.graphics.Color.BLACK
+                        )
+                        val sanitizedHeadVal = sanitizedResult.cleaned.take(160)
+                        val vbWVal = sanitizedResult.vbWidth
+                        val vbHVal = sanitizedResult.vbHeight
+                        val targetHVal = 56
+
+                        val bmp = if (!svg.isBlank()) {
+                            LatexSvgRenderer.render(svg, 56, android.graphics.Color.BLACK)
+                        } else null
+                        val bmpWVal = bmp?.width ?: 0
+                        val bmpHVal = bmp?.height ?: 0
+
+                        val errorMsg: String? = if (bmpWVal > 0 && bmpHVal > 0) null else "render returned null bitmap"
+
+                        // 存 PNG
+                        if (bmp != null) {
+                            val pngFile = File(filesDir, "selftest/%02d.png".format(i))
+                            pngFile.outputStream().use { bmp.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) }
+                            // 及时释放 bitmap 内存，仅保留路径
+                            bmp.recycle()
+                        }
+
+                        val errorMsg: String? = if (bmp != null && bmp.width > 0 && bmp.height > 0) null else "render returned null bitmap"
+
+                        // 写诊断
+                        val sb = StringBuilder()
+                        sb.appendLine("[#$i] tex=$latex")
+                        sb.appendLine("  okSvg=${!svg.isBlank()} svgLen=${svg.length} svgHead=${svg.take(200)}")
+                        sb.appendLine("  sanitizedHead=${sanitizedResult.cleaned.take(160)}")
+                        sb.appendLine("  vb=${sanitizedResult.vbWidth}x${sanitizedResult.vbHeight} targetH=56 bitmap=${bmp?.width}x${bmp?.height}")
+                        sb.appendLine("  error=$errorMsg")
+
+                        // 写入诊断文件（追加）
+                        File(filesDir, "latex_selftest.txt").writeText(
+                            File(filesDir, "latex_selftest.txt").readTextOrNull()?.plus(sb.toString()) ?: sb.toString()
+                        )
+                    } else {
+                        val errMsg = svgResult.exceptionOrNull()?.message ?: "Unknown error"
+                        File(filesDir, "latex_selftest.txt").writeText(
+                            File(filesDir, "latex_selftest.txt").readTextOrNull()?.plus(
+                                "[#$i] tex=$latex\n  okSvg=false svgLen=0 svgHead=\n  sanitizedHead=\n  vb=0x0 targetH=56 bitmap=0x0\n  error=SVG error: $errMsg\n"
+                            ) ?: "[#$i] tex=$latex\n  okSvg=false svgLen=0 svgHead=\n  sanitizedHead=\n  vb=0x0 targetH=56 bitmap=0x0\n  error=SVG error: $errMsg\n"
+                        )
+                    }
+                }
+
+                // 写完成标记（原子替换：先写 DONE.tmp 再 renameTo(DONE)）
+                val doneTmp = File(filesDir, "latex_selftest.txt.tmp")
+                val doneFile = File(filesDir, "latex_selftest.txt")
+                File(filesDir, "latex_selftest.txt").appendText("DONE ${System.currentTimeMillis()}\n")
+                // 原子替换：先写 .tmp 再 rename
+                File(filesDir, "latex_selftest_done.txt").writeText("DONE ${System.currentTimeMillis()}\n")
+                File(filesDir, "latex_selftest_done.txt").renameTo(File(filesDir, "DONE"))
+
+                Log.i("LatexSelfTest", "Self-test completed, PNGs saved to ${filesDir.absolutePath}/selftest/")
+            } catch (e: Exception) {
+                Log.e("LatexSelfTest", "Self-test failed", e)
+                File(filesDir, "latex_selftest.txt").writeText("self_test_exception: ${e.message}")
+            }
+        }.start()
+    }
