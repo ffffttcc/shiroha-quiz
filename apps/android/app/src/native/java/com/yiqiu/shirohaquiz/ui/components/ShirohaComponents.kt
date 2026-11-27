@@ -48,6 +48,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
+import com.yiqiu.shirohaquiz.ui.text.latex.LatexTextOrFallback
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -428,15 +429,15 @@ fun QuizOptionCard(
                 )
             )
             Spacer(Modifier.width(8.dp))
-            Text(
-                text = displayText,
+            LatexTextOrFallback(
+                text = text,
                 modifier = Modifier.weight(1f),
-                style = MaterialTheme.typography.bodyMedium.copy(
+                style = TextStyle(
                     fontSize = optionFontSize,
-                    lineHeight = optionLineHeight
-                ),
-                fontWeight = if (selected || resultStyle != QuizOptionResultStyle.Neutral) FontWeight.SemiBold else FontWeight.Normal,
-                color = compactContentColor
+                    lineHeight = optionLineHeight,
+                    fontWeight = if (selected || resultStyle != QuizOptionResultStyle.Neutral) FontWeight.SemiBold else FontWeight.Normal,
+                    color = compactContentColor
+                )
             )
         }
         return
@@ -477,12 +478,15 @@ fun QuizOptionCard(
                 }
             }
             Spacer(Modifier.width(ShirohaDimens.OptionLabelTextGap))
-            Text(
-                text = displayText,
+            LatexTextOrFallback(
+                text = text,
                 modifier = Modifier.weight(1f),
-                style = MaterialTheme.typography.bodyMedium.copy(fontSize = optionFontSize, lineHeight = optionLineHeight),
-                fontWeight = if (selected || resultStyle != QuizOptionResultStyle.Neutral) FontWeight.SemiBold else FontWeight.Normal,
-                color = MaterialTheme.colorScheme.onSurface
+                style = TextStyle(
+                    fontSize = optionFontSize,
+                    lineHeight = optionLineHeight,
+                    fontWeight = if (selected || resultStyle != QuizOptionResultStyle.Neutral) FontWeight.SemiBold else FontWeight.Normal,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
             )
             if (selected && resultStyle == QuizOptionResultStyle.Neutral) {
                 Spacer(Modifier.width(8.dp))
