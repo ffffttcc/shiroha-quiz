@@ -13,13 +13,14 @@ import org.xmlpull.v1.XmlPullParser
 import org.xmlpull.v1.XmlPullParserFactory
 import java.io.StringReader
 import kotlin.math.roundToInt
+import kotlin.math.abs
 
 /**
  * Minimal SVG path renderer for MathJax SVG output.
- * Supports: viewBox, <g transform="...">, <path d="..."> with M/L/H/V/C/Q/Z commands.
+ * Supports: viewBox, <g transform="...">, <path d="..."> with M/L/H/V/C/Q/S/T/Z commands.
  * No external dependencies; pure Android graphics.
- * 
- * Matrix multiplication order: parentMatrix.postConcat(childMatrix) == childMatrix * parentMatrix
+ *
+ * Matrix multiplication order: parent.postConcat(child) == child * parent
  * This matches Python script's mat_multiply(parent, child) which applies child after parent.
  */
 object SvgPathRenderer {
@@ -27,6 +28,214 @@ object SvgPathRenderer {
     private const val CACHE_SIZE = 64
 
     private val cache = LruCache<String, Bitmap>(CACHE_SIZE)
+
+    /** Path command data class - defined first for forward references */
+    private data class PathCmd(val letter: Char, val args: List<String>)
+
+    /** Parse SVG transform string to Android Matrix */
+    private fun parseTransform(transformStr: String?): Matrix {
+        val result = Matrix()
+        if (transformStr == null || transformStr.isBlank()) return result
+
+        val pattern = Regex("""(\w+)\s*\(([^)]+)\)""")
+        for (match in pattern.findAll(transformStr)) {
+            val fn = match.groupValues[1]
+            val argsStr = match.groupValues[2]
+            val args = argsStr.split(Regex("""[\\s,]+""")).filter { it.isNotBlank() }.map { it.toFloat() }
+            val m = Matrix()
+            when (fn) {
+                "translate" -> {
+                    val tx = args.getOrElse(0) { 0f }
+                    val ty = args.getOrElse(1) { 0f }
+                    m.postTranslate(tx, ty)
+                }
+                "scale" -> {
+                    val sx = args.getOrElse(0) { 1f }
+                    val sy = args.getOrElse(1) { sx }
+                    m.postScale(sx, sy)
+                }
+                "matrix" -> {
+                    if (args.size >= 6) {
+                        m.setValues(floatArrayOf(
+                            args[0], args[2], args[4],
+                            args[1], args[3], args[5],
+                            0f, 0f, 1f
+                        ))
+                    }
+                }
+            }
+            // postConcat applies in correct order: result.postConcat(m) = m * result
+            result.postConcat(m)
+        }
+        return result
+    }
+
+    /** Parse path d attribute into commands using NumberScanner for robust number parsing */
+    private fun parsePathCommands(d: String): List<PathCmd> {
+        val result = mutableListOf<PathCmd>()
+        val scanner = NumberScanner(d)
+        while (scanner.hasNext()) {
+            val c = scanner.nextChar()
+            if (c.isLetter()) {
+                val letter = c
+                val args = mutableListOf<String>()
+                while (scanner.hasNext() && !scanner.peekChar().isLetter()) {
+                    val num = scanner.nextNumber()
+                    if (num != null) {
+                        args.add(num)
+                    }
+                }
+                result.add(PathCmd(letter, args))
+            }
+        }
+        return result
+    }
+
+    /** Number scanner for SVG path data: handles negative, decimal, scientific, and concatenated numbers */
+    private class NumberScanner(private val input: String) {
+        private var pos = 0
+
+        fun hasNext(): Boolean = pos < input.length
+
+        fun peekChar(): Char = if (pos < input.length) input[pos] else '\u0000'
+
+        fun nextChar(): Char {
+            val c = if (pos < input.length) input[pos] else '\u0000'
+            pos++
+            return c
+        }
+
+        fun nextNumber(): String? {
+            skipWhitespaceAndComma()
+            if (!hasNext()) return null
+
+            val start = pos
+            var hasExponent = false
+            var hasDecimal = false
+
+            while (hasNext()) {
+                val c = input[pos]
+                when (c) {
+                    '0', '1', '2', '3', '4', '5', '6', '7', '8', '9' -> {
+                        // digit, continue
+                    }
+                    '-' -> {
+                        if (pos == start || hasExponent) {
+                            // minus at start or after e/E
+                        } else {
+                            break // minus in middle = next number
+                        }
+                    }
+                    '+' -> {
+                        if (hasExponent) {
+                            // plus after e/E
+                        } else if (pos == start) {
+                            // plus at start
+                        } else {
+                            break
+                        }
+                    }
+                    '.', ',' -> {
+                        if (!hasDecimal) {
+                            hasDecimal = true
+                        } else {
+                            break // second decimal/comma = end of number
+                        }
+                    }
+                    'e', 'E' -> {
+                        if (!hasExponent) {
+                            hasExponent = true
+                        } else {
+                            break
+                        }
+                    }
+                    else -> break
+                }
+                pos++
+            }
+
+            if (pos > start) {
+                return input.substring(start, pos)
+            }
+            return null
+        }
+
+        private fun skipWhitespaceAndComma() {
+            while (hasNext()) {
+                val c = input[pos]
+                if (c <= ' ' || c == ',') {
+                    pos++
+                } else {
+                    break
+                }
+            }
+        }
+    }
+
+    /** Parse SVG and extract paths with transforms using stack-based parsing */
+    private class SvgParser(private val svgStr: String) {
+        data class PathData(
+            val commands: List<PathCmd>,
+            val transform: Matrix
+        )
+
+        val viewBox: RectF = RectF()
+        val paths: MutableList<PathData> = mutableListOf()
+
+        fun parse() {
+            val factory = XmlPullParserFactory.newInstance()
+            factory.isNamespaceAware = true
+            val parser = factory.newPullParser()
+            parser.setInput(StringReader(svgStr))
+
+            val matrixStack = mutableListOf<Matrix>()
+            matrixStack.add(Matrix())
+
+            var eventType = parser.eventType
+            while (eventType != XmlPullParser.END_DOCUMENT) {
+                when (eventType) {
+                    XmlPullParser.START_TAG -> {
+                        val tag = parser.name
+                        val transformStr = parser.getAttributeValue(null, "transform")
+                        val parentMatrix = matrixStack.last()
+                        val currentMatrix = if (transformStr != null) {
+                            val m = parseTransform(transformStr)
+                            val result = Matrix()
+                            result.set(parentMatrix)
+                            result.postConcat(m)
+                            result
+                        } else {
+                            Matrix(parentMatrix)
+                        }
+                        matrixStack.add(currentMatrix)
+
+                        if (tag == "svg") {
+                            val vbStr = parser.getAttributeValue(null, "viewBox") ?: "0 0 100 100"
+                            val parts = vbStr.split(Regex("""[\\s,]+""")).map { it.toFloat() }
+                            if (parts.size >= 4) {
+                                viewBox.set(parts[0], parts[1], parts[0] + parts[2], parts[1] + parts[3])
+                            }
+                        } else if (tag == "path") {
+                            val d = parser.getAttributeValue(null, "d") ?: ""
+                            if (d.isNotBlank()) {
+                                val commands = parsePathCommands(d)
+                                val matrix = Matrix(matrixStack.last())
+                                paths.add(PathData(commands, matrix))
+                            }
+                        }
+                    }
+                    XmlPullParser.END_TAG -> {
+                        if (parser.name == "g") {
+                            if (matrixStack.size > 1) {
+                                matrixStack.removeAt(matrixStack.lastIndex)
+                            }
+                        }
+                    }
+                }
+                eventType = parser.next()
+            }
+        }
+    }
 
     /**
      * Render MathJax SVG string to Bitmap.
@@ -110,8 +319,8 @@ object SvgPathRenderer {
         baseMatrix: Matrix
     ): Path {
         val path = Path()
-        var x: Float = 0f
-        var y: Float = 0f
+        var x = 0f
+        var y = 0f
 
         // Combine: first apply localTransform (from <g> ancestors), then baseMatrix (viewBox->canvas)
         // M = baseMatrix * localTransform  (apply local first, then base)
@@ -121,7 +330,7 @@ object SvgPathRenderer {
 
         for (cmd in commands) {
             val isRelative = cmd.letter.isLowerCase()
-            val letter = cmd.letter.uppercase()
+            val letter = cmd.letter.uppercaseChar()
             val args = cmd.args
             var i = 0
 
@@ -130,10 +339,10 @@ object SvgPathRenderer {
                     while (i + 1 < args.size) {
                         val nx = args[i].toFloat()
                         val ny = args[i + 1].toFloat()
-                        val tx: Float = if (isRelative) x + nx else nx
-                        val ty: Float = if (isRelative) y + ny else ny
+                        val tx = if (isRelative) x + nx else nx
+                        val ty = if (isRelative) y + ny else ny
                         x = tx; y = ty
-                        val pt = floatArrayOf(nx, ny)
+                        val pt = floatArrayOf(tx, ty)
                         combinedTransform.mapPoints(pt)
                         if (i == 0) path.moveTo(pt[0], pt[1]) else path.lineTo(pt[0], pt[1])
                         i += 2
@@ -143,10 +352,10 @@ object SvgPathRenderer {
                     while (i + 1 < args.size) {
                         val nx = args[i].toFloat()
                         val ny = args[i + 1].toFloat()
-                        val tx: Float = if (isRelative) x + nx else nx
-                        val ty: Float = if (isRelative) y + ny else ny
+                        val tx = if (isRelative) x + nx else nx
+                        val ty = if (isRelative) y + ny else ny
                         x = tx; y = ty
-                        val pt = floatArrayOf(nx, ny)
+                        val pt = floatArrayOf(tx, ty)
                         combinedTransform.mapPoints(pt)
                         path.lineTo(pt[0], pt[1])
                         i += 2
@@ -155,9 +364,9 @@ object SvgPathRenderer {
                 'H' -> {
                     for (arg in args) {
                         val nx = arg.toFloat()
-                        val tx: Float = if (isRelative) x + nx else nx
+                        val tx = if (isRelative) x + nx else nx
                         x = tx
-                        val pt = floatArrayOf(nx, y)
+                        val pt = floatArrayOf(tx, y)
                         combinedTransform.mapPoints(pt)
                         path.lineTo(pt[0], pt[1])
                     }
@@ -165,9 +374,9 @@ object SvgPathRenderer {
                 'V' -> {
                     for (arg in args) {
                         val ny = arg.toFloat()
-                        val ty: Float = if (isRelative) y + ny else ny
+                        val ty = if (isRelative) y + ny else ny
                         y = ty
-                        val pt = floatArrayOf(x, ny)
+                        val pt = floatArrayOf(x, ty)
                         combinedTransform.mapPoints(pt)
                         path.lineTo(pt[0], pt[1])
                     }
@@ -181,12 +390,12 @@ object SvgPathRenderer {
                         val nx = args[i + 4].toFloat()
                         val ny = args[i + 5].toFloat()
 
-                        val tx1: Float = if (isRelative) x + x1 else x1
-                        val ty1: Float = if (isRelative) y + y1 else y1
-                        val tx2: Float = if (isRelative) x + x2 else x2
-                        val ty2: Float = if (isRelative) y + y2 else y2
-                        val tx: Float = if (isRelative) x + nx else nx
-                        val ty: Float = if (isRelative) y + ny else ny
+                        val tx1 = if (isRelative) x + x1 else x1
+                        val ty1 = if (isRelative) y + y1 else y1
+                        val tx2 = if (isRelative) x + x2 else x2
+                        val ty2 = if (isRelative) y + y2 else y2
+                        val tx = if (isRelative) x + nx else nx
+                        val ty = if (isRelative) y + ny else ny
 
                         val pts = floatArrayOf(tx1, ty1, tx2, ty2, tx, ty)
                         combinedTransform.mapPoints(pts)
@@ -196,6 +405,28 @@ object SvgPathRenderer {
                         i += 6
                     }
                 }
+                'S' -> {
+                    // Smooth cubic: treat as line to end point for simplicity (MathJax rarely uses S)
+                    while (i + 3 < args.size) {
+                        val x2 = args[i].toFloat()
+                        val y2 = args[i + 1].toFloat()
+                        val nx = args[i + 2].toFloat()
+                        val ny = args[i + 3].toFloat()
+
+                        val tx2 = if (isRelative) x + x2 else x2
+                        val ty2 = if (isRelative) y + y2 else y2
+                        val tx = if (isRelative) x + nx else nx
+                        val ty = if (isRelative) y + ny else ny
+
+                        val pts = floatArrayOf(tx2, ty2, tx, ty)
+                        combinedTransform.mapPoints(pts)
+                        // Approximate: line to end
+                        path.lineTo(pts[2], pts[3])
+
+                        x = tx; y = ty
+                        i += 4
+                    }
+                }
                 'Q' -> {
                     while (i + 3 < args.size) {
                         val x1 = args[i].toFloat()
@@ -203,10 +434,10 @@ object SvgPathRenderer {
                         val nx = args[i + 2].toFloat()
                         val ny = args[i + 3].toFloat()
 
-                        val tx1: Float = if (isRelative) x + x1 else x1
-                        val ty1: Float = if (isRelative) y + y1 else y1
-                        val tx: Float = if (isRelative) x + nx else nx
-                        val ty: Float = if (isRelative) y + ny else ny
+                        val tx1 = if (isRelative) x + x1 else x1
+                        val ty1 = if (isRelative) y + y1 else y1
+                        val tx = if (isRelative) x + nx else nx
+                        val ty = if (isRelative) y + ny else ny
 
                         val pts = floatArrayOf(tx1, ty1, tx, ty)
                         combinedTransform.mapPoints(pts)
@@ -216,6 +447,23 @@ object SvgPathRenderer {
                         i += 4
                     }
                 }
+                'T' -> {
+                    // Smooth quadratic: treat as line to end point
+                    while (i + 1 < args.size) {
+                        val nx = args[i].toFloat()
+                        val ny = args[i + 1].toFloat()
+
+                        val tx = if (isRelative) x + nx else nx
+                        val ty = if (isRelative) y + ny else ny
+
+                        val pt = floatArrayOf(tx, ty)
+                        combinedTransform.mapPoints(pt)
+                        path.lineTo(pt[0], pt[1])
+
+                        x = tx; y = ty
+                        i += 2
+                    }
+                }
                 'Z' -> {
                     path.close()
                 }
@@ -223,154 +471,7 @@ object SvgPathRenderer {
                     Log.w(TAG, "Unsupported path command: $letter")
                 }
             }
-            return path
         }
-
-    /** Parse SVG transform string to Android Matrix */
-    fun parseTransform(transformStr: String?): Matrix {
-        val matrix = Matrix()
-        if (transformStr == null || transformStr.isBlank()) return matrix
-
-        val pattern = Regex("""(\w+)\s*\(([^)]+)\)""")
-        for (match in pattern.findAll(transformStr)) {
-            val fn = match.groupValues[1]
-            val args = match.groupValues[2].split(Regex("""[\\s,]+""")).filter { it.isNotBlank() }.map { it.toFloat() }
-            val m = Matrix()
-            when (fn) {
-                "translate" -> {
-                    val tx = args.getOrElse(0) { 0f }
-                    val ty = args.getOrElse(1) { 0f }
-                    m.postTranslate(tx, ty)
-                }
-                "scale" -> {
-                    val sx = args.getOrElse(0) { 1f }
-                    val sy = args.getOrElse(1) { sx }
-                    m.postScale(sx, sy)
-                }
-                "matrix" -> {
-                    if (args.size >= 6) {
-                        m.setValues(floatArrayOf(
-                            args[0], args[2], args[4],
-                            args[1], args[3], args[5],
-                            0f, 0f, 1f
-                        ))
-                    }
-                }
-            }
-            // postConcat applies in correct order: matrix.postConcat(child) = child * matrix
-            return matrix
-        }
-
-    /** Parse path d attribute into commands */
-    data class PathCmd(val letter: Char, val args: List<String>)
-
-    private fun parsePathData(d: String, path: Path) {
-        val commands = parsePathCommands(d)
-        for (cmd in commands) {
-            // This is kept for compatibility but not used in new flow
-        }
-    }
-
-    private fun parsePathCommands(d: String): List<PathCmd> {
-        val result = mutableListOf<PathCmd>()
-        var i = 0
-        while (i < d.length) {
-            val c = d[i]
-            if (c.isLetter()) {
-                val letter = c
-                i++
-                val start = i
-                while (i < d.length && !d[i].isLetter()) i++
-                val argsStr = d.substring(start, i).trim()
-                val args = if (argsStr.isBlank()) emptyList() else argsStr.split(Regex("""[\\s,]+""")).filter { it.isNotBlank() }
-                result.add(PathCmd(c, args))
-            } else {
-                i++
-            }
-        }
-        return result
-    }
-
-    /** Parse SVG and extract paths with transforms using stack-based parsing */
-    class SvgParser(private val svgStr: String) {
-        data class PathData(
-            val commands: List<PathCmd>,
-            val transform: Matrix
-        )
-
-        val viewBox: RectF = RectF()
-        val paths: MutableList<Pair<List<PathCmd>, Matrix>> = mutableListOf()
-
-        fun parse() {
-            val factory = XmlPullParserFactory.newInstance()
-            factory.isNamespaceAware = true
-            val parser = factory.newPullParser()
-            parser.setInput(StringReader(svgStr))
-
-            val matrixStack = mutableListOf<Matrix>()
-            matrixStack.add(Matrix())
-
-            var eventType = parser.eventType
-            while (eventType != XmlPullParser.END_DOCUMENT) {
-                when (eventType) {
-                    XmlPullParser.START_TAG -> {
-                        val tag = parser.name
-                        val transformStr = parser.getAttributeValue(null, "transform")
-                        val parentMatrix = matrixStack.last()
-                        val currentMatrix = if (transformStr != null) {
-                            val m = parseTransform(transformStr)
-                            val result = Matrix()
-                            result.set(parentMatrix)
-                            result.postConcat(m)
-                            result
-                        } else {
-                            Matrix(parentMatrix)
-                        }
-                        matrixStack.add(currentMatrix)
-
-                        if (tag == "svg") {
-                            val vbStr = parser.getAttributeValue(null, "viewBox") ?: "0 0 100 100"
-                            val parts = vbStr.split(Regex("""[\\s,]+""")).map { it.toFloat() }
-                            if (parts.size >= 4) {
-                                viewBox.set(parts[0], parts[1], parts[0] + parts[2], parts[1] + parts[3])
-                            }
-                        } else if (tag == "path") {
-                            val d = parser.getAttributeValue(null, "d") ?: ""
-                            if (d.isNotBlank()) {
-                                val commands = parsePathCommands(d)
-                                val matrix = Matrix(matrixStack.last())
-                                paths.add(commands to matrix)
-                            }
-                        }
-                    }
-                    XmlPullParser.END_TAG -> {
-                        if (parser.name == "g") {
-                            matrixStack.removeAt(matrixStack.lastIndex)
-                        }
-                    }
-                }
-                eventType = parser.next()
-            }
-        }
-
-        private fun parsePathCommands(d: String): List<PathCmd> {
-            val result = mutableListOf<PathCmd>()
-            var i = 0
-            while (i < d.length) {
-                val c = d[i]
-                if (c.isLetter()) {
-                    val letter = c
-                    i++
-                    val start = i
-                    while (i < d.length && !d[i].isLetter()) i++
-                    val argsStr = d.substring(start, i).trim()
-                    val args = if (argsStr.isBlank()) emptyList() else argsStr.split(Regex("""[\\s,]+""")).filter { it.isNotBlank() }
-                    result.add(PathCmd(c, args))
-                } else {
-                    i++
-                }
-            }
-            return result
-        }
+        return path
     }
 }
