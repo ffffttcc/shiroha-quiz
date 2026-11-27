@@ -51,14 +51,14 @@ object SvgPathRenderer {
             val canvas = Canvas(bitmap)
             canvas.drawColor(Color.TRANSPARENT)
             
-            // Transform: viewBox -> bitmap coordinates
-            // viewBox: (minX, minY, width, height) -> (0, 0, bitmapWidth, bitmapHeight)
-            // Need to flip Y because viewBox Y increases upward (math coords), canvas Y increases downward
-            val viewToBitmap = Matrix().apply {
-                postScale(1f, -1f)  // Flip Y
-                postTranslate(-vb.left, -vb.bottom)  // Move origin to viewBox bottom-left
-                postScale(scale, scale)  // Scale to target size
-                postTranslate(0f, bitmapHeight.toFloat())  // Flip Y back for canvas
+            // Build transform: viewBox -> canvas coordinates
+            // viewBox: (minX, minY, width, height) with Y up
+            // Canvas: (0,0) top-left, Y down
+            // Transform: translate(-minX, -minY) -> scale(scale, -scale) -> translate(0, bitmapHeight)
+            val viewToCanvas = Matrix().apply {
+                postTranslate(-vb.left, -vb.bottom)  // Move viewBox origin to (0,0)
+                postScale(scale, -scale)              // Scale and flip Y
+                postTranslate(0f, bitmapHeight.toFloat()) // Flip Y for canvas
             }
             
             val paint = Paint().apply {
@@ -69,7 +69,7 @@ object SvgPathRenderer {
             
             var drawn = false
             for (pathData in parser.paths) {
-                val path = buildPath(pathData.commands, pathData.transform)
+                val path = buildPath(pathData.commands, pathData.transform, viewToCanvas)
                 if (!path.isEmpty) {
                     canvas.drawPath(path, paint)
                     drawn = true
@@ -89,96 +89,122 @@ object SvgPathRenderer {
         }
     }
     
-    /** Build Android Path from path commands with transform matrix applied */
-    private fun buildPath(commands: List<PathCmd>, transform: Matrix): Path {
+    /** Build Android Path from path commands with combined transform applied */
+    private fun buildPath(
+        commands: List<PathCmd>, 
+        localTransform: Matrix, 
+        viewToCanvas: Matrix
+    ): Path {
         val path = Path()
-        val tempMatrix = Matrix()
         var x = 0f
         var y = 0f
         var startX = 0f
         var startY = 0f
         
+        // Combine local transform (from <g>) with view-to-canvas transform
+        val combinedTransform = Matrix()
+        viewToCanvas.postConcat(localTransform)
+        
         for (cmd in commands) {
             val isRelative = cmd.letter.isLowerCase()
             val letter = cmd.letter.uppercase()
-            val args = cmd.args.toFloatArray()
+            val args = cmd.args
             var i = 0
             
             when (cmd.letter.uppercase()) {
                 'M' -> {
-                    while (i + 1 < cmd.args.size) {
-                        val nx = cmd.args[i].toFloat()
-                        val ny = cmd.args[i + 1].toFloat()
+                    while (i + 1 < args.size) {
+                        val nx = args[i].toFloat()
+                        val ny = args[i + 1].toFloat()
                         val tx = if (cmd.letter.isLowerCase()) x + nx else nx
                         val ty = if (cmd.letter.isLowerCase()) y + ny else ny
                         x = tx; y = ty
                         if (i == 0) {
                             startX = x; startY = y
-                            tempMatrix.setScale(1f, -1f)  // Will be combined with transform later
-                            path.moveTo(nx, ny)  // Apply transform in batch below
+                            val pt = floatArrayOf(nx, ny)
+                            combinedTransform.mapPoints(pt)
+                            path.moveTo(pt[0], pt[1])
                         } else {
-                            path.lineTo(nx, ny)
+                            val pt = floatArrayOf(nx, ny)
+                            combinedTransform.mapPoints(pt)
+                            path.lineTo(pt[0], pt[1])
                         }
                         i += 2
                     }
                 }
                 'L' -> {
-                    while (i + 1 < cmd.args.size) {
-                        val nx = cmd.args[i].toFloat()
-                        val ny = cmd.args[i + 1].toFloat()
+                    while (i + 1 < args.size) {
+                        val nx = args[i].toFloat()
+                        val ny = args[i + 1].toFloat()
                         val tx = if (cmd.letter.isLowerCase()) x + nx else nx
                         val ty = if (cmd.letter.isLowerCase()) y + ny else ny
                         x = tx; y = ty
-                        path.lineTo(nx, ny)
+                        val pt = floatArrayOf(nx, ny)
+                        combinedTransform.mapPoints(pt)
+                        path.lineTo(pt[0], pt[1])
                         i += 2
                     }
                 }
                 'H' -> {
-                    for (arg in cmd.args) {
+                    for (arg in args) {
                         val nx = arg.toFloat()
                         val tx = if (cmd.letter.isLowerCase()) x + nx else nx
                         x = tx
-                        path.lineTo(nx, y)
+                        val pt = floatArrayOf(nx, y)
+                        combinedTransform.mapPoints(pt)
+                        path.lineTo(pt[0], pt[1])
                     }
                 }
                 'V' -> {
-                    for (arg in cmd.args) {
+                    for (arg in args) {
                         val ny = arg.toFloat()
                         val ty = if (cmd.letter.isLowerCase()) y + ny else ny
                         y = ty
-                        path.lineTo(x, ny)
+                        val pt = floatArrayOf(x, ny)
+                        combinedTransform.mapPoints(pt)
+                        path.lineTo(pt[0], pt[1])
                     }
                 }
                 'C' -> {
-                    while (i + 5 < cmd.args.size) {
-                        val x1 = cmd.args[i].toFloat()
-                        val y1 = cmd.args[i + 1].toFloat()
-                        val x2 = cmd.args[i + 2].toFloat()
-                        val y2 = cmd.args[i + 3].toFloat()
-                        val nx = cmd.args[i + 4].toFloat()
-                        val ny = cmd.args[i + 5].toFloat()
+                    while (i + 5 < args.size) {
+                        val x1 = args[i].toFloat()
+                        val y1 = args[i + 1].toFloat()
+                        val x2 = args[i + 2].toFloat()
+                        val y2 = args[i + 3].toFloat()
+                        val nx = args[i + 4].toFloat()
+                        val ny = args[i + 5].toFloat()
+                        
                         val tx1 = if (cmd.letter.isLowerCase()) x + x1 else x1
                         val ty1 = if (cmd.letter.isLowerCase()) y + y1 else y1
                         val tx2 = if (cmd.letter.isLowerCase()) x + x2 else x2
                         val ty2 = if (cmd.letter.isLowerCase()) y + y2 else y2
-                        val tx = if (cmd.letter.isLowerCase()) x + nx else nx
-                        val ty = if (cmd.letter.isLowerCase()) y + ny else ny
-                        path.cubicTo(tx1, ty1, tx2, ty2, nx, ny)
+                        val tx = if (cmd.letter.isLowerCase()) x + args[i + 4].toFloat() else args[i + 4].toFloat()
+                        val ty = if (cmd.letter.isLowerCase()) y + args[i + 5].toFloat() else args[i + 5].toFloat()
+                        
+                        val pts = floatArrayOf(tx1, ty1, tx2, ty2, tx, ty)
+                        combinedTransform.mapPoints(pts)
+                        path.cubicTo(pts[0], pts[1], pts[2], pts[3], pts[4], pts[5])
+                        
                         x = tx; y = ty
                         i += 6
                     }
                 }
                 'Q' -> {
-                    while (i + 3 < cmd.args.size) {
-                        val x1 = cmd.args[i].toFloat()
-                        val y1 = cmd.args[i + 1].toFloat()
-                        val nx = cmd.args[i + 2].toFloat()
-                        val ny = cmd.args[i + 3].toFloat()
+                    while (i + 3 < args.size) {
+                        val x1 = args[i].toFloat()
+                        val y1 = args[i + 1].toFloat()
+                        val nx = args[i + 2].toFloat()
+                        val ny = args[i + 3].toFloat()
+                        
                         val tx1 = if (cmd.letter.isLowerCase()) x + x1 else x1
                         val ty1 = if (cmd.letter.isLowerCase()) y + y1 else y1
                         val tx = if (cmd.letter.isLowerCase()) x + nx else nx
                         val ty = if (cmd.letter.isLowerCase()) y + ny else ny
-                        path.quadTo(tx1, ty1, nx, ny)
+                        
+                        val pts = floatArrayOf(tx1, ty1, tx, ty)
+                        combinedTransform.mapPoints(pts)
+                        path.quadTo(pts[0], pts[1], pts[2], pts[3])
+                        
                         x = tx; y = ty
                         i += 4
                     }
@@ -194,62 +220,40 @@ object SvgPathRenderer {
         }
     }
     
-    /** 2D affine matrix [a c e; b d f; 0 0 1] */
-    data class Matrix2D(
-        val a: Float = 1f, val b: Float = 0f,
-        val c: Float = 0f, val d: Float = 1f,
-        val e: Float = 0f, val f: Float = 0f
-    ) {
-        companion object {
-            val IDENTITY = Matrix2D()
-        }
+    /** Parse SVG transform string to Android Matrix */
+    fun parseTransform(transformStr: String?): Matrix {
+        val matrix = Matrix()
+        if (transformStr == null || transformStr.isBlank()) return matrix
         
-        fun multiply(other: Matrix2D): Matrix2D = Matrix2D(
-            a = a * other.a + c * other.b,
-            b = b * other.a + d * other.b,
-            c = a * other.c + c * other.d,
-            d = b * other.c + d * other.d,
-            e = a * other.e + c * other.f + e,
-            f = b * other.e + d * other.f + f
-        )
-        
-        fun mapPoint(x: Float, y: Float): Pair<Float, Float> =
-            (a * x + c * y + e, b * x + d * y + f)
-        
-        fun toAndroidMatrix(): Matrix = Matrix().apply {
-            setValues(floatArrayOf(a, c, e, b, d, f, 0f, 0f, 1f))
-        }
-    }
-    
-    /** Parse SVG transform string to Matrix2D */
-    fun parseTransform(transformStr: String?): Matrix2D {
-        if (transformStr == null || transformStr.isBlank()) return Matrix2D.IDENTITY
-        var matrix = Matrix2D.IDENTITY
         val pattern = Regex("""(\w+)\s*\(([^)]+)\)""")
         for (match in pattern.findAll(transformStr)) {
             val fn = match.groupValues[1]
             val args = match.groupValues[2].split(Regex(@"[\s,]+")).filter { it.isNotBlank() }.map { it.toFloat() }
-            val m = when (fn) {
+            val m = Matrix()
+            when (fn) {
                 "translate" -> {
                     val tx = args.getOrElse(0) { 0f }
                     val ty = args.getOrElse(1) { 0f }
-                    Matrix2D(1f, 0f, 0f, 1f, tx, ty)
+                    m.postTranslate(tx, ty)
                 }
                 "scale" -> {
                     val sx = args.getOrElse(0) { 1f }
                     val sy = args.getOrElse(1) { sx }
-                    Matrix2D(sx, 0f, 0f, sy, 0f, 0f)
+                    m.postScale(sx, sy)
                 }
                 "matrix" -> {
-                    if (args.size >= 6) Matrix2D(args[0], args[1], args[2], args[3], args[4], args[5])
-                    else Matrix2D.IDENTITY
+                    if (args.size >= 6) {
+                        m.setValues(floatArrayOf(
+                            args[0], args[2], args[4],
+                            args[1], args[3], args[5],
+                            0f, 0f, 1f
+                        ))
+                    }
                 }
-                else -> Matrix2D.IDENTITY
             }
-            matrix = matrix.multiply(m)
+            // Post-concat to apply in SVG order (first transform first)
+            return matrix
         }
-        return matrix
-    }
     
     /** Parse path d attribute into commands */
     data class PathCmd(val letter: Char, val args: List<String>)
@@ -301,9 +305,10 @@ object SvgPathRenderer {
                         val transformStr = parser.getAttributeValue(null, "transform")
                         val parentMatrix = matrixStack.last()
                         val currentMatrix = if (transformStr != null) {
-                            val m = parseTransform(transformStr).toAndroidMatrix()
+                            val m = parseTransform(transformStr)
                             val result = Matrix()
-                            parentMatrix.postConcat(m)
+                            result.set(parentMatrix)
+                            result.postConcat(m)
                             result
                         } else {
                             Matrix(parentMatrix)
