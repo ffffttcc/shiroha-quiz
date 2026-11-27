@@ -64,6 +64,7 @@ import com.yiqiu.shirohaquiz.document.DocumentRecognitionManager
 import com.yiqiu.shirohaquiz.state.QuizRepository
 import com.yiqiu.shirohaquiz.ui.components.AppBackground
 import com.yiqiu.shirohaquiz.ui.components.DocumentTaskCapsule
+import com.yiqiu.shirohaquiz.ui.components.LatexRenderHost
 import com.yiqiu.shirohaquiz.ui.screens.AboutScreen
 import com.yiqiu.shirohaquiz.ui.screens.AiSettingsScreen
 import com.yiqiu.shirohaquiz.ui.screens.BankDetailScreen
@@ -313,9 +314,10 @@ fun ShirohaAppShell() {
                 }
             }
         ) { innerPadding ->
-            Row(
-                modifier = Modifier
-                    .fillMaxSize()
+            LatexRenderHost {
+                Row(
+                    modifier = Modifier
+                        .fillMaxSize()
                     .padding(innerPadding)
             ) {
                 if (useSideNavigation) {
@@ -511,6 +513,7 @@ fun ShirohaAppShell() {
             }
         }
     }
+}
 }
 }
 
