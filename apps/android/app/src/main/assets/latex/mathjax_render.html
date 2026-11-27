@@ -5,7 +5,11 @@
     <meta name="viewport" content="width=device-width,initial-scale=1">
     <script>
         window.MathJax = {
-            tex: { inlineMath: [['$','$']], displayMath: [['$$','$$']] },
+            tex: {
+                inlineMath: [['$','$']],
+                displayMath: [['$$','$$']],
+                packages: { '[+]': ['mhchem', 'ams', 'color', 'boldsymbol', 'newcommand'] }
+            },
             svg: { fontCache: 'local' },
             startup: { typeset: false },
             options: { enableMenu: false }

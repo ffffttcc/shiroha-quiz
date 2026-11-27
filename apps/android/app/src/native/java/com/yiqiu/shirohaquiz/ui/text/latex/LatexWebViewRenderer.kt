@@ -11,6 +11,9 @@ import android.util.LruCache
 import android.view.ViewGroup
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import android.webkit.WebResourceRequest
+import android.webkit.WebResourceError
+import android.webkit.WebResourceResponse
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -47,6 +50,8 @@ class LatexWebViewRenderer(private val activity: Activity) {
     private var webView: WebView? = null
     private var container: ViewGroup? = null
     private var isReady = false
+    private var pageLoaded = false
+    private var pageLoadFailed = false
     private var warmUpCallback: ((Boolean) -> Unit)? = null
     private var warmUpAttempts = 0
     private val handler = Handler(Looper.getMainLooper())
@@ -101,8 +106,20 @@ class LatexWebViewRenderer(private val activity: Activity) {
             override fun onPageFinished(view: WebView?, url: String?) {
                 super.onPageFinished(view, url)
                 if (url?.startsWith("file:///android_asset/latex/mathjax_render.html") == true) {
+                    pageLoaded = true
+                    Log.d(TAG, "mathjax_render.html loaded")
                     startWarmUpPolling()
                 }
+            }
+
+            override fun onReceivedError(view: WebView?, request: WebResourceRequest?, error: WebResourceError?) {
+                Log.e(TAG, "WebView load error: ${error?.description}")
+                pageLoadFailed = true
+            }
+
+            override fun onReceivedHttpError(view: WebView?, request: WebResourceRequest?, errorResponse: WebResourceResponse?) {
+                Log.e(TAG, "WebView http error: ${errorResponse?.statusCode} ${request?.url}")
+                pageLoadFailed = true
             }
         }
         webView = wv
@@ -133,18 +150,37 @@ class LatexWebViewRenderer(private val activity: Activity) {
             warmUpCallback = null
             return
         }
+        if (pageLoadFailed) {
+            Log.e(TAG, "Page load failed, aborting warm-up")
+            warmUpCallback?.invoke(false)
+            warmUpCallback = null
+            return
+        }
+        if (!pageLoaded) {
+            // Page not loaded yet, wait a bit and retry
+            handler.postDelayed({ startWarmUpPolling() }, WARMUP_POLL_INTERVAL_MS)
+            return
+        }
         webView?.evaluateJavascript("window.isReady && window.isReady()") { value ->
-            if (value == "true") {
+            if (destroyed) {
+                warmUpCallback?.invoke(false)
+                warmUpCallback = null
+                return@evaluateJavascript
+            }
+            val v = value?.trim()?.trim('"')
+            if (v == "true") {
                 isReady = true
                 Log.d(TAG, "WebView warm-up complete, MathJax ready")
                 warmUpCallback?.invoke(true)
                 warmUpCallback = null
                 processQueue()
             } else {
-                handler.postDelayed(Runnable { startWarmUpPolling() }, WARMUP_POLL_INTERVAL_MS)
+                handler.postDelayed({ startWarmUpPolling() }, WARMUP_POLL_INTERVAL_MS)
             }
         }
     }
+
+    private var destroyed = false
 
     /**
      * Render a single LaTeX formula to Bitmap.
@@ -156,6 +192,10 @@ class LatexWebViewRenderer(private val activity: Activity) {
      * @param onResult Callback with (Bitmap?, errorCode?) on UI thread
      */
     fun render(latex: String, heightPx: Int, color: Int, onResult: (Bitmap?, String?) -> Unit) {
+        if (destroyed) {
+            onResult(null, "WEBVIEW_DESTROYED")
+            return
+        }
         val cacheKey = "$latex|$heightPx|$color"
         lruCache.get(cacheKey)?.let { cached ->
             Log.d(TAG, "Cache hit for: ${latex.take(40)}")
@@ -175,7 +215,7 @@ class LatexWebViewRenderer(private val activity: Activity) {
      * Only one evaluateJavascript in flight at a time.
      */
     private fun processQueue() {
-        if (isProcessing || renderQueue.isEmpty() || !isReady) return
+        if (destroyed || isProcessing || renderQueue.isEmpty() || !isReady) return
         val request = renderQueue.peekFirst() ?: return
         isProcessing = true
 
@@ -190,19 +230,26 @@ class LatexWebViewRenderer(private val activity: Activity) {
 
         Log.d(TAG, "Sending renderBatch seq=${request.sequenceId} tex=${request.latex.take(50)}")
 
+        // Escape JSON for JS string literal: escape backslashes first, then single quotes
+        val payload = jsonItems
+            .replace("\\", "\\\\")
+            .replace("'", "\\'")
+
         // 3-second timeout per request - track the Runnable to cancel later
         val timeoutRunnable = Runnable {
-            if (isProcessing && renderQueue.isNotEmpty() && renderQueue.peekFirst()?.sequenceId == request.sequenceId) {
+            if (!destroyed && isProcessing && renderQueue.isNotEmpty() && renderQueue.peekFirst()?.sequenceId == request.sequenceId) {
                 Log.w(TAG, "Render timeout seq=${request.sequenceId}")
                 handleJsResult(request.sequenceId, null, "JS_TIMEOUT")
             }
         }
         handler.postDelayed(timeoutRunnable, RENDER_TIMEOUT_MS)
 
-        webView?.evaluateJavascript("window.renderBatch('$jsonItems')") { jsResult ->
-            handler.removeCallbacks(timeoutRunnable)
-            // jsResult is empty string; actual result retrieved via getResult()
-            pollJsResult(request)
+        webView?.evaluateJavascript("window.startBatch('$payload')") { jsResult ->
+            if (!destroyed) {
+                handler.removeCallbacks(timeoutRunnable)
+                // jsResult is empty string; actual result retrieved via getResult()
+                pollJsResult(request)
+            }
         }
     }
 
@@ -212,12 +259,15 @@ class LatexWebViewRenderer(private val activity: Activity) {
     private fun pollJsResult(request: RenderRequest) {
         val startTime = System.currentTimeMillis()
         fun doPoll() {
-            if (System.currentTimeMillis() - startTime > RENDER_TIMEOUT_MS) {
-                Log.w(TAG, "Poll timeout seq=${request.sequenceId}")
-                handleJsResult(request.sequenceId, null, "JS_TIMEOUT")
+            if (destroyed || System.currentTimeMillis() - startTime > RENDER_TIMEOUT_MS) {
+                if (!destroyed) {
+                    Log.w(TAG, "Poll timeout seq=${request.sequenceId}")
+                    handleJsResult(request.sequenceId, null, "JS_TIMEOUT")
+                }
                 return
             }
             webView?.evaluateJavascript("window.getResult()") { resultStr ->
+                if (destroyed) return@evaluateJavascript
                 if (resultStr != null && resultStr != "''" && resultStr != "\"\"" && resultStr.length > 2) {
                     try {
                         // resultStr is a JSON string like "[{\"id\":1,\"pngBase64\":\"...\"}]"
@@ -241,15 +291,15 @@ class LatexWebViewRenderer(private val activity: Activity) {
                         }
                         if (!found) {
                             // Our ID not in results yet, keep polling
-                            handler.postDelayed(Runnable { doPoll() }, 50)
+                            handler.postDelayed({ doPoll() }, 50)
                         }
                     } catch (e: Exception) {
                         Log.w(TAG, "Parse JS result failed: ${e.message}, raw=$resultStr")
-                        handler.postDelayed(Runnable { doPoll() }, 50)
+                        handler.postDelayed({ doPoll() }, 50)
                     }
                 } else {
                     // No result yet, keep polling
-                    handler.postDelayed(Runnable { doPoll() }, 50)
+                    handler.postDelayed({ doPoll() }, 50)
                 }
             }
         }
@@ -295,28 +345,41 @@ class LatexWebViewRenderer(private val activity: Activity) {
 
         pngBase64?.let { b64 ->
             scope.launch {
-                val bitmap = withTimeoutOrNull(RENDER_TIMEOUT_MS) {
-                    try {
-                        val bytes = Base64.decode(b64, Base64.DEFAULT)
-                        val bmp = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
-                        bmp
-                    } catch (e: Exception) {
-                        Log.e(TAG, "Decode failed seq=${request.sequenceId}", e)
-                        null
+                try {
+                    val bitmap = withTimeoutOrNull(RENDER_TIMEOUT_MS) {
+                        try {
+                            val bytes = Base64.decode(b64, Base64.NO_WRAP)
+                            val bmp = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                            bmp
+                        } catch (e: Exception) {
+                            Log.e(TAG, "Decode failed seq=${request.sequenceId}", e)
+                            null
+                        }
                     }
-                }
-                handler.post {
-                    if (bitmap != null && bitmap.width > 0 && bitmap.height > 0) {
-                        val cacheKey = "${request.latex}|${request.heightPx}|${request.color}"
-                        lruCache.put(cacheKey, bitmap)
-                        request.onResult(bitmap, null)
-                    } else {
-                        request.onResult(null, "DECODE_FAILED")
+                    if (!destroyed) {
+                        handler.post {
+                            if (bitmap != null && bitmap.width > 0 && bitmap.height > 0) {
+                                val cacheKey = "${request.latex}|${request.heightPx}|${request.color}"
+                                lruCache.put(cacheKey, bitmap)
+                                request.onResult(bitmap, null)
+                            } else {
+                                request.onResult(null, "DECODE_FAILED")
+                            }
+                        }
+                    }
+                } catch (e: kotlinx.coroutines.CancellationException) {
+                    // Expected on shutdown, ignore
+                } catch (e: Exception) {
+                    Log.e(TAG, "Unexpected error in deliverResult", e)
+                    if (!destroyed) {
+                        handler.post { request.onResult(null, "UNEXPECTED_ERROR") }
                     }
                 }
             }
         } ?: run {
-            request.onResult(null, "DECODE_FAILED")
+            if (!destroyed) {
+                request.onResult(null, "DECODE_FAILED")
+            }
         }
     }
 
@@ -325,15 +388,19 @@ class LatexWebViewRenderer(private val activity: Activity) {
      * Must call from onDestroy / DisposableEffect onDispose.
      */
     fun release() {
+        destroyed = true
         scope.coroutineContext.cancel()
         handler.removeCallbacksAndMessages(null)
-        webView?.apply {
+        val wv = webView
+        webView = null
+        wv?.apply {
             destroy()
             container?.removeAllViews()
         }
-        webView = null
         container = null
         isReady = false
+        pageLoaded = false
+        pageLoadFailed = false
         renderQueue.clear()
         isProcessing = false
         lruCache.evictAll()
