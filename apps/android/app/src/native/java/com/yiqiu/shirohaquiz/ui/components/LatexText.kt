@@ -2,13 +2,12 @@ package com.yiqiu.shirohaquiz.ui.components
 
 import android.graphics.Bitmap
 import android.graphics.Color as AndroidColor
-import androidx.annotation.OptIn
 import androidx.compose.foundation.Image
-import androidx.compose.foundation.experimental.FlowRow
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.layout.maxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -22,11 +21,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.yiqiu.shirohaquiz.ui.text.latex.LatexWebViewRenderer
 
-@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun LatexText(
     text: String,
@@ -36,12 +35,7 @@ fun LatexText(
 ) {
     val segments = remember(text) { splitLatex(text) }
     
-    FlowRow(
-        modifier = modifier,
-        horizontalArrangement = Arrangement.spacedBy(0.dp),
-        verticalArrangement = Arrangement.spacedBy(4.dp),
-        maxItemsInEachRow = Int.MAX_VALUE
-    ) {
+    Column(modifier = modifier.fillMaxWidth()) {
         segments.forEachIndexed { idx, seg ->
             when (seg) {
                 is Segment.Plain -> {
@@ -50,10 +44,8 @@ fun LatexText(
                         fontSize = 14.sp,
                         color = Color(0xFF1A1A2E),
                         maxLines = 1,
-                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
-                        modifier = Modifier
-                            .width(0.dp)
-                            .weight(1f, fill = true)
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.fillMaxWidth()
                     )
                 }
                 is Segment.Formula -> {
@@ -75,8 +67,7 @@ fun LatexText(
                             contentDescription = null,
                             modifier = Modifier
                                 .heightIn(max = (heightPx + 8).dp)
-                                .width(0.dp)
-                                .weight(1f, fill = true),
+                                .fillMaxWidth(),
                             contentScale = ContentScale.Fit
                         )
                     } else if (err != null) {
@@ -85,10 +76,8 @@ fun LatexText(
                             fontSize = 14.sp,
                             color = Color(0xFFCC0000),
                             maxLines = 1,
-                            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
-                            modifier = Modifier
-                                .width(0.dp)
-                                .weight(1f, fill = true)
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.fillMaxWidth()
                         )
                     } else {
                         Text(
@@ -96,13 +85,14 @@ fun LatexText(
                             fontSize = 14.sp,
                             color = Color(0xFF888888),
                             maxLines = 1,
-                            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
-                            modifier = Modifier
-                                .width(0.dp)
-                                .weight(1f, fill = true)
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.fillMaxWidth()
                         )
                     }
                 }
+            }
+            if (idx < segments.lastIndex) {
+                androidx.compose.foundation.layout.Spacer(modifier = Modifier.padding(top = 4.dp))
             }
         }
     }
