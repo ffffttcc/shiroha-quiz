@@ -91,15 +91,14 @@ fun LatexTestScreen(onBack: () -> Unit) {
                 val bmp = if (!svg.isBlank()) {
                     LatexSvgRenderer.render(svg, 56, android.graphics.Color.BLACK)
                 } else null
-                val bitmap = bmp?.let { it.asImageBitmap() }
-                val bmpWVal = bitmap?.width ?: 0
-                val bmpHVal = bitmap?.height ?: 0
+                val bmpWVal = bmp?.width ?: 0
+                val bmpHVal = bmp?.height ?: 0
                 
                 val errorMsg: String? = if (bmpWVal > 0 && bmpHVal > 0) null else "render returned null bitmap"
                 
                 FormulaResult(
                     latex = latex,
-                    bitmap = bmp?.let { it.asImageBitmap() },
+                    bitmap = bmp,
                     renderError = if (bmpWVal > 0 && bmpHVal > 0) null else "render returned null bitmap",
                     svgOk = svgOkFlag,
                     svgLen = svg.length,
