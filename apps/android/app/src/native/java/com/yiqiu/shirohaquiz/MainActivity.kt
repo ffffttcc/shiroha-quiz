@@ -234,4 +234,5 @@ class MainActivity : ComponentActivity() {
 
     private fun writeResult(msg: String) {
         writeResult(this, msg)
-    }
+    }}
+}
