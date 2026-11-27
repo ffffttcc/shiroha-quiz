@@ -203,22 +203,6 @@ object SvgPathRenderer {
                         val tag = parser.name
                         val transformStr = parser.getAttributeValue(null, "transform")
                         val parentMatrix = matrixStack.last()
-                        val currentMatrix = if (transformStr != null) {
-                            val m = parseTransform(transformStr)
-                            // Debug: log transform string and resulting matrix (first 5 only)
-                            if (transformLogs.size < 5) {
-                                val vals = FloatArray(9)
-                                m.getValues(vals)
-                                transformLogs.add("transform=\"$transformStr\" -> [${vals.joinToString(",")}]")
-                            }
-                            val result = Matrix()
-                            result.set(parentMatrix)
-                            result.postConcat(m)
-                            result
-                        } else {
-                            Matrix(parentMatrix)
-                        }
-                        matrixStack.add(currentMatrix)
 
                         if (tag == "svg") {
                             val vbStr = parser.getAttributeValue(null, "viewBox") ?: "0 0 100 100"
@@ -226,17 +210,72 @@ object SvgPathRenderer {
                             if (parts.size >= 4) {
                                 viewBox.set(parts[0], parts[1], parts[0] + parts[2], parts[1] + parts[3])
                             }
+                            // svg itself can have transform; push to stack for descendants
+                            val currentMatrix = if (transformStr != null) {
+                                val m = parseTransform(transformStr)
+                                if (transformLogs.size < 5) {
+                                    val vals = FloatArray(9)
+                                    m.getValues(vals)
+                                    transformLogs.add("transform=\"$transformStr\" -> [${vals.joinToString(",")}]")
+                                }
+                                val result = Matrix()
+                                result.set(parentMatrix)
+                                result.postConcat(m)
+                                result
+                            } else {
+                                Matrix(parentMatrix)
+                            }
+                            matrixStack.add(currentMatrix)
+                        } else if (tag == "g") {
+                            // g element: combine transform and push to stack for children
+                            val currentMatrix = if (transformStr != null) {
+                                val m = parseTransform(transformStr)
+                                if (transformLogs.size < 5) {
+                                    val vals = FloatArray(9)
+                                    m.getValues(vals)
+                                    transformLogs.add("transform=\"$transformStr\" -> [${vals.joinToString(",")}]")
+                                }
+                                val result = Matrix()
+                                result.set(parentMatrix)
+                                result.postConcat(m)
+                                result
+                            } else {
+                                Matrix(parentMatrix)
+                            }
+                            matrixStack.add(currentMatrix)
                         } else if (tag == "path") {
+                            // path is a leaf: combine ancestor matrix with its own transform, do NOT push to stack
                             val d = parser.getAttributeValue(null, "d") ?: ""
                             if (d.isNotBlank()) {
                                 val commands = parsePathCommands(d)
-                                val matrix = Matrix(matrixStack.last())
-                                paths.add(PathData(commands, matrix))
+                                val m = Matrix(parentMatrix)
+                                if (!transformStr.isNullOrBlank()) {
+                                    // M = ancestor × local (SVG: apply local first, then ancestor)
+                                    // preConcat: m = m × other → parent × local
+                                    m.preConcat(parseTransform(transformStr))
+                                }
+                                paths.add(PathData(commands, m))
+                            }
+                        } else {
+                            // Other elements (defs, etc.): if they have transform, push for descendants
+                            if (transformStr != null) {
+                                val m = parseTransform(transformStr)
+                                if (transformLogs.size < 5) {
+                                    val vals = FloatArray(9)
+                                    m.getValues(vals)
+                                    transformLogs.add("transform=\"$transformStr\" -> [${vals.joinToString(",")}]")
+                                }
+                                val result = Matrix()
+                                result.set(parentMatrix)
+                                result.postConcat(m)
+                                result
+                                matrixStack.add(result)
                             }
                         }
                     }
                     XmlPullParser.END_TAG -> {
-                        if (parser.name == "g") {
+                        val tag = parser.name
+                        if (tag == "g" || tag == "svg") {
                             if (matrixStack.size > 1) {
                                 matrixStack.removeAt(matrixStack.lastIndex)
                             }
