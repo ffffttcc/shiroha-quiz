@@ -106,10 +106,13 @@ class MainActivity : ComponentActivity() {
         val renderer = LatexWebViewRenderer(this)
         renderer.attach(host)
 
+        val warmUpStartMs = System.currentTimeMillis()
+
         renderer.warmUp { ok ->
-            Log.d("LatexRender", "selftest warmUp=$ok")
+            val warmUpMs = System.currentTimeMillis() - warmUpStartMs
+            Log.d("LatexRender", "selftest warmUp=$ok warmUpMs=$warmUpMs")
             if (!ok) {
-                writeSelfTest("warmUp FAILED")
+                writeSelfTest("warmUp FAILED warmUpMs=$warmUpMs")
                 renderer.release()
                 rootGroup.removeView(host)
                 return@warmUp
@@ -124,9 +127,14 @@ class MainActivity : ComponentActivity() {
             val sb = StringBuilder()
             val done = java.util.concurrent.atomic.AtomicInteger(0)
             var okCount = 0
-            val t0 = System.currentTimeMillis()
+            val startMs = System.currentTimeMillis()
+            val renderTimes = java.util.concurrent.ConcurrentHashMap<Int, Long>()
+            
             formulas.forEachIndexed { i, f ->
+                val renderStartMs = System.currentTimeMillis()
                 renderer.render(f, 56, android.graphics.Color.BLACK) { bmp, err ->
+                    val costMs = System.currentTimeMillis() - renderStartMs
+                    renderTimes[i] = costMs
                     if (bmp != null) {
                         okCount++
                         val snapshot = bmp
@@ -137,17 +145,27 @@ class MainActivity : ComponentActivity() {
                                 }
                             }
                         }.start()
-                        sb.appendLine("[#$i] ok ${bmp.width}x${bmp.height} tex=$f")
+                        sb.appendLine("[#$i] ok ${bmp.width}x${bmp.height} costMs=$costMs tex=$f")
                     } else {
                         sb.appendLine("[#$i] FAIL err=$err tex=$f")
                     }
                     val currentDone = done.incrementAndGet()
                     if (currentDone == formulas.size) {
-                        sb.appendLine("total ok=$okCount/${formulas.size} costMs=${System.currentTimeMillis()-t0}")
-                        writeSelfTest(sb.toString())
-                        java.io.File(filesDir, "latex_selftest.DONE").writeText("ok ${System.currentTimeMillis()}")
-                        renderer.release()
-                        rootGroup.removeView(host)
+                        val totalMs = System.currentTimeMillis() - startMs
+                        
+                        // Cache hit test: re-render first formula
+                        val cacheTestStartMs = System.currentTimeMillis()
+                        val firstFormula = formulas[0]
+                        renderer.render(firstFormula, 56, android.graphics.Color.BLACK) { bmp, err ->
+                            val cacheHitMs = System.currentTimeMillis() - cacheTestStartMs
+                            val firstRenderMs = renderTimes[0] ?: 0L
+                            sb.appendLine("cacheHitMs=$cacheHitMs (firstRenderMs=$firstRenderMs)")
+                            sb.appendLine("summary ok=$okCount/${formulas.size} warmUpMs=$warmUpMs totalMs=$totalMs cacheHitMs=$cacheHitMs")
+                            writeSelfTest(sb.toString())
+                            java.io.File(filesDir, "latex_selftest.DONE").writeText("ok ${System.currentTimeMillis()}")
+                            renderer.release()
+                            rootGroup.removeView(host)
+                        }
                     }
                 }
             }
