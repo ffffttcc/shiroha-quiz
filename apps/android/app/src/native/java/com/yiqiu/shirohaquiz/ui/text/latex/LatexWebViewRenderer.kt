@@ -139,7 +139,7 @@ class LatexWebViewRenderer(private val activity: Activity) {
                 warmUpCallback = null
                 processQueue()
             } else {
-                handler.postDelayed({ startWarmUpPolling() }, WARMUP_POLL_INTERVAL_MS)
+                handler.postDelayed(Runnable { startWarmUpPolling() }, WARMUP_POLL_INTERVAL_MS)
             }
         }
     }
@@ -236,14 +236,14 @@ class LatexWebViewRenderer(private val activity: Activity) {
                             }
                         }
                         // Our ID not in results yet, keep polling
-                        handler.postDelayed({ poll() }, 50)
+                        handler.postDelayed(Runnable { poll() }, 50)
                     } catch (e: Exception) {
                         Log.w(TAG, "Parse JS result failed: ${e.message}, raw=$resultStr")
-                        handler.postDelayed({ poll() }, 50)
+                        handler.postDelayed(Runnable { poll() }, 50)
                     }
                 } else {
                     // No result yet, keep polling
-                    handler.postDelayed({ poll() }, 50)
+                    handler.postDelayed(Runnable { poll() }, 50)
                 }
             }
         }
@@ -319,7 +319,7 @@ class LatexWebViewRenderer(private val activity: Activity) {
      * Must call from onDestroy / DisposableEffect onDispose.
      */
     fun release() {
-        scope.cancel()
+        scope.coroutineContext.cancel()
         handler.removeCallbacksAndMessages(null)
         webView?.apply {
             destroy()
