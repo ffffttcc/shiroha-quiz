@@ -21,6 +21,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -63,12 +64,6 @@ fun LatexTestScreen(onBack: () -> Unit) {
     var qsInitTimeMs by remember { mutableStateOf<Long>(-1) }
     var qsInitError by remember { mutableStateOf<String?>(null) }
 
-    // Per-formula results (each has its own mutableState for independent recomposition)
-    val results = remember { mutableStateListOf<FormulaResult>() }
-
-    val targetHeightPx = LocalDensity.current.run { 56.dp.roundToPx() }
-    val targetHeightDp = 56
-
     val formulas = remember {
         listOf(
             "\\mathbf{B}_{12}",
@@ -84,6 +79,57 @@ fun LatexTestScreen(onBack: () -> Unit) {
             "1.8\\times10^{-5}",
             "K_{ZnY}^{\\prime}"
         )
+    }
+
+    // Per-formula results (SnapshotStateList for independent recomposition)
+    val results = remember { mutableStateListOf<FormulaResult>().apply {
+        formulas.forEach { add(FormulaResult(it)) }
+    } }
+
+    val targetHeightPx = LocalDensity.current.run { 56.dp.roundToPx() }
+    val targetHeightDp = 56
+
+    // Render function (must be defined before use in LaunchedEffect)
+    fun renderAll() {
+        val useWeb = webReady
+
+        // Clear and re-initialize with correct source
+        results.clear()
+        formulas.forEach { latex ->
+            add(FormulaResult(latex = latex, source = if (useWeb) "webview" else "quickjs"))
+        }
+
+        if (useWeb) {
+            formulas.forEachIndexed { idx, latex ->
+                renderer.render(latex, targetHeightPx, 0xFF000000.toInt()) { bmp, error ->
+                    val updated = results[idx].copy(
+                        bitmap = bmp,
+                        renderError = error
+                    )
+                    Choreographer.getInstance().postFrameCallback {
+                        results[idx] = updated
+                    }
+                }
+            }
+        } else {
+            // QuickJS fallback (synchronous)
+            val fallbackResults = formulas.mapIndexed { idx, latex ->
+                val svgResult = LatexEngine.renderSvgString(latex)
+                if (svgResult.isSuccess) {
+                    val svg = svgResult.getOrNull() ?: ""
+                    val bmp = if (svg.isNotBlank()) {
+                        LatexSvgRenderer.render(svg, targetHeightDp, Color.BLACK)
+                    } else null
+                    val err = if (bmp != null && bmp.width > 0 && bmp.height > 0) null else "render returned null bitmap"
+                    FormulaResult(latex = latex, bitmap = bmp, renderError = err, source = "quickjs")
+                } else {
+                    val errMsg = svgResult.exceptionOrNull()?.message ?: "Unknown error"
+                    FormulaResult(latex = latex, bitmap = null, renderError = "SVG error: $errMsg", source = "quickjs")
+                }
+            }
+            results.clear()
+            fallbackResults.forEach { add(it) }
+        }
     }
 
     // 1dp AndroidView to host WebView
@@ -121,9 +167,9 @@ fun LatexTestScreen(onBack: () -> Unit) {
         }
     }
 
-    // Render when ready
+    // Render when ready (renderAll is defined above)
     LaunchedEffect(key1 = webReady, key2 = qsInitDone) {
-        if ((webReady || (qsInitDone && LatexEngine.isReady())) && results.isEmpty()) {
+        if ((webReady || (qsInitDone && LatexEngine.isReady())) && results.all { it.bitmap == null }) {
             renderAll()
         }
     }
@@ -131,50 +177,6 @@ fun LatexTestScreen(onBack: () -> Unit) {
     // Release on dispose
     DisposableEffect(Unit) {
         onDispose { renderer.release() }
-    }
-
-    fun renderAll() {
-        val useWeb = webReady
-
-        // Initialize results with empty bitmaps
-        val initial = formulas.map { latex ->
-            FormulaResult(latex = latex, source = if (useWeb) "webview" else "quickjs")
-        }
-        results.clear()
-        results.addAll(initial)
-
-        if (useWeb) {
-            formulas.forEachIndexed { idx, latex ->
-                renderer.render(latex, targetHeightPx, 0xFF000000) { bmp, error ->
-                    // Post on animation to update this single item
-                    val updated = results[idx].copy(
-                        bitmap = bmp,
-                        renderError = error
-                    )
-                    Choreographer.getInstance().postFrameCallback {
-                        results[idx] = updated
-                    }
-                }
-            }
-        } else {
-            // QuickJS fallback (synchronous)
-            val fallbackResults = formulas.mapIndexed { idx, latex ->
-                val svgResult = LatexEngine.renderSvgString(latex)
-                if (svgResult.isSuccess) {
-                    val svg = svgResult.getOrNull() ?: ""
-                    val bmp = if (svg.isNotBlank()) {
-                        LatexSvgRenderer.render(svg, targetHeightDp, Color.BLACK)
-                    } else null
-                    val err = if (bmp != null && bmp.width > 0 && bmp.height > 0) null else "render returned null bitmap"
-                    FormulaResult(latex = latex, bitmap = bmp, renderError = err, source = "quickjs")
-                } else {
-                    val errMsg = svgResult.exceptionOrNull()?.message ?: "Unknown error"
-                    FormulaResult(latex = latex, bitmap = null, renderError = "SVG error: $errMsg", source = "quickjs")
-                }
-            }
-            results.clear()
-            results.addAll(fallbackResults)
-        }
     }
 
     val successCount = results.count { it.bitmap != null }
@@ -272,7 +274,7 @@ fun LatexTestScreen(onBack: () -> Unit) {
 }
 
 private data class FormulaResult(
-    val latex: String,
+    val latex: String = "",
     val bitmap: Bitmap? = null,
     val renderError: String? = null,
     val source: String = "webview"
@@ -284,4 +286,3 @@ private data class FormulaResult(
         source: String = this.source
     ): FormulaResult = FormulaResult(latex, bitmap, renderError, source)
 }
-
