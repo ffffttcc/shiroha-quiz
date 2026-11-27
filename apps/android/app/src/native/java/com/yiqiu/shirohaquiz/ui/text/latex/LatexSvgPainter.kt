@@ -15,7 +15,7 @@ import kotlin.runCatching
 
 /**
  * Converts MathJax SVG output to a Compose Painter using AndroidSVG.
- * Handles MathJax-specific quirks: inline styles, ex units, etc.
+ * Handles MathJax-specific quirks: inline styles, ex units, currentColor, etc.
  */
 object LatexSvgPainter {
     private const val TAG = "LatexSvgPainter"
@@ -49,31 +49,43 @@ object LatexSvgPainter {
             )
     }
 
-    /** Parse SVG string to Android Picture. */
+    /** Parse SVG string to Android Picture using renderToPicture with explicit dimensions from viewBox. */
     private fun parseToPicture(svgString: String): Picture {
-        val svg = SVG.getFromInputStream(ByteArrayInputStream(svgString.toByteArray()))
-        val picture = Picture()
-        val width = svg.getDocumentWidth().toInt()
-        val height = svg.getDocumentHeight().toInt()
-        android.util.Log.d("LatexSvgPainter", "picture=${picture.width}x${picture.height} doc=${svg.documentWidth}x${svg.documentHeight} vb=${svg.documentViewBox}")
-        val canvas = picture.beginRecording(width, height)
-        svg.renderToCanvas(canvas)
-        picture.endRecording()
+        val sanitized = replaceCurrentColor(svgString)
+        android.util.Log.d("LatexSvgPainter", "parsing SVG: ${sanitized.take(200)}")
+        
+        val svg = SVG.getFromString(sanitized)
+        
+        // Get dimensions from viewBox - this is the most reliable source
+        val vb = svg.documentViewBox
+        val wPx = if (vb != null && vb.width() > 0) vb.width() else 1608f
+        val hPx = if (vb != null && vb.height() > 0) vb.height() else 836f
+        val bitmapW = wPx.toInt().coerceAtLeast(1)
+        val bitmapH = hPx.toInt().coerceAtLeast(1)
+        
+        android.util.Log.d("LatexSvgPainter", "parseToPicture: vb=$vb wPx=$wPx hPx=$hPx bitmap=${bitmapW}x${bitmapH}")
+        
+        // Use renderToPicture with explicit pixel dimensions - most reliable approach
+        val picture = svg.renderToPicture(bitmapW, bitmapH)
+        
+        android.util.Log.d("LatexSvgPainter", "renderToPicture result: picture=${picture.width}x${picture.height}")
         return picture
     }
 
     /**
      * Preprocess MathJax SVG output for AndroidSVG compatibility:
-     * - Convert inline style="fill:currentColor" to fill attribute
+     * - Replace currentColor with #000000 (androidsvg doesn't support currentColor well)
+     * - Remove vertical-align with ex units from style
      * - Remove width/height with ex units (rely on viewBox)
      * - Ensure viewBox is present
-     * - Clean style attribute: remove vertical-align with ex units
-     * - If viewBox exists but width/height missing, write width/height from viewBox
      */
     private fun preprocessSvg(svg: String): String {
         var result = svg.trim()
 
-        // 1. Clean style attribute: remove vertical-align with ex units, keep other declarations
+        // 1. Replace currentColor with black (#000000) - androidsvg doesn't handle currentColor well
+        result = result.replace("currentColor", "#000000")
+
+        // 2. Clean style attribute: remove vertical-align with ex units, keep other declarations
         result = result.replace(Regex("""style\s*=\s*"([^"]*)"""")) { match ->
             val styleContent = match.groupValues[1]
             val kept = styleContent
@@ -84,27 +96,23 @@ object LatexSvgPainter {
             if (kept.isEmpty()) "" else """style="$kept""""
         }
 
-        // 2. Remove width/height attributes that use 'ex' units (AndroidSVG doesn't support ex)
-        // Keep viewBox if present
+        // 3. Remove width/height attributes that use 'ex' units (AndroidSVG doesn't support ex)
         result = result.replace(Regex("""\swidth="[^"]*ex[^"]*""", RegexOption.IGNORE_CASE), "")
         result = result.replace(Regex("""\sheight="[^"]*ex[^"]*""", RegexOption.IGNORE_CASE), "")
 
-        // 3. Ensure viewBox exists and extract width/height from it
-        val vbMatch = Regex("""viewBox\s*=\s*"([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)"""").find(result)
-        if (vbMatch != null) {
-            val w = vbMatch.groupValues[3]
-            val h = vbMatch.groupValues[4]
-            // Remove existing width/height (any unit), then insert width/height from viewBox
-            result = result.replace(Regex("""\swidth="[^"]*""", RegexOption.IGNORE_CASE), "")
-            result = result.replace(Regex("""\sheight="[^"]*""", RegexOption.IGNORE_CASE), "")
-            result = result.replaceFirst("<svg", "<svg width=\"$w\" height=\"$h\" ")
-        } else if (!result.contains("viewBox", true)) {
-            // Fallback: no viewBox, try to extract width/height
+        // 4. Remove any remaining width/height attributes (we'll use viewBox for dimensions)
+        // but keep viewBox if present
+        result = result.replace(Regex("""\swidth="[^"]*""", RegexOption.IGNORE_CASE), "")
+        result = result.replace(Regex("""\sheight="[^"]*""", RegexOption.IGNORE_CASE), "")
+
+        // 5. Ensure viewBox exists
+        if (!result.contains("viewBox", true)) {
+            // Try to extract width/height for viewBox
             val widthMatch = Regex("""width="([^"]+)"""").find(result)
             val heightMatch = Regex("""height="([^"]+)"""").find(result)
-            val w = widthMatch?.groupValues?.get(1)?.toDoubleOrNull() ?: 100.0
-            val h = heightMatch?.groupValues?.get(1)?.toDoubleOrNull() ?: 100.0
-            result = result.replaceFirst("<svg", "<svg viewBox=\"0 0 $w $h\" width=\"$w\" height=\"$h\"")
+            val w = widthMatch?.groupValues?.get(1)?.toDoubleOrNull() ?: 1608.0
+            val h = heightMatch?.groupValues?.get(1)?.toDoubleOrNull() ?: 836.0
+            result = result.replaceFirst("<svg", "<svg viewBox=\"0 0 $w $h\"")
         }
 
         return result
@@ -116,14 +124,16 @@ object LatexSvgPainter {
      */
     private fun sanitizeAggressive(svg: String): String {
         var result = svg.trim()
+        // Replace currentColor first
+        result = result.replace("currentColor", "#000000")
         // Remove style, role, focusable, aria-* attributes entirely
         result = result.replace(Regex("""\s(style|role|focusable|aria-[a-z-]+)\s*=\s*"[^"]*"""", RegexOption.IGNORE_CASE), "")
-        // Ensure viewBox
+        // Ensure viewBox and width/height
         if (!result.contains("viewBox", true)) {
             val widthMatch = Regex("""width="([^"]+)"""").find(result)
             val heightMatch = Regex("""height="([^"]+)"""").find(result)
-            val w = widthMatch?.groupValues?.get(1)?.toDoubleOrNull() ?: 100.0
-            val h = heightMatch?.groupValues?.get(1)?.toDoubleOrNull() ?: 100.0
+            val w = widthMatch?.groupValues?.get(1)?.toDoubleOrNull() ?: 1608.0
+            val h = heightMatch?.groupValues?.get(1)?.toDoubleOrNull() ?: 836.0
             result = result.replaceFirst("<svg", "<svg viewBox=\"0 0 $w $h\" width=\"$w\" height=\"$h\"")
         }
         return result
