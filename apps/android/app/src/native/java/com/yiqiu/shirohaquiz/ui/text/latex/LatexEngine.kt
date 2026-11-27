@@ -16,6 +16,7 @@ import java.util.concurrent.TimeoutException
  * LaTeX rendering engine using QuickJS + MathJax.
  * Singleton; init(Context) must be called once before use.
  * All JS execution happens on a dedicated single-thread executor because QuickJS is not thread-safe.
+ * Returns SVG string; bitmap rendering is delegated to LatexSvgRenderer.
  */
 object LatexEngine {
     private const val TAG = "LatexEngine"
@@ -202,71 +203,17 @@ object LatexEngine {
     }
 
     /**
-     * Render LaTeX to PainterResult (blocking, with timeout).
-     * Returns PainterResult.Success(Painter) on success, or PainterResult.Error(message) on failure.
+     * Render LaTeX to SVG string (non-blocking Result wrapper).
+     * Returns Result.success(svgString) or Result.failure(exception).
      * Uses LRU cache (key = raw LaTeX string).
      */
-    fun renderPainterBlocking(latex: String): LatexSvgPainter.PainterResult {
-        if (!isReady()) {
-            val err = "Engine not ready: $initError"
-            Log.w(TAG, err)
-            return LatexSvgPainter.PainterResult.Error(err)
-        }
-        // Check cache first - only cache successful SVG strings
-        cache.get(latex)?.let { svg ->
-            val result = LatexSvgPainter.toPainter(svg)
-            if (result is LatexSvgPainter.PainterResult.Success) {
-                return result
+    fun renderSvgString(latex: String): Result<String> {
+        return runCatching {
+            val result = renderSvgBlocking(latex)
+            if (result == null || result.startsWith("ERR:")) {
+                throw RuntimeException(result ?: "Unknown error")
             }
-        }
-
-        val future: Future<LatexSvgPainter.PainterResult> = executor.submit(Callable {
-            val ctx = context!!
-            try {
-                // Escape for JS string literal
-                val escaped = latex
-                    .replace("\\", "\\\\")
-                    .replace("\"", "\\\"")
-                    .replace("\n", "\\n")
-                    .replace("\r", "\\r")
-                    .replace("\t", "\\t")
-                val js = "globalThis.renderLatex(\"$escaped\")"
-                val resultObj = ctx.executeScript(js, "render.js")
-                val retClass = resultObj?.javaClass?.name ?: "null"
-                val result = resultObj?.toString() ?: "null"
-                Log.d(TAG, "render retClass=$retClass ret=${result.take(200)}")
-
-                if (result.startsWith("ERR:")) {
-                    Log.w(TAG, "render fail tex=$latex ret=$result")
-                    LatexSvgPainter.PainterResult.Error(result.substring(4))
-                } else if (!result.trim().startsWith("<svg")) {
-                    val err = "Unexpected output (not SVG): ${result.take(200)}"
-                    Log.w(TAG, "render fail tex=$latex ret=$result")
-                    LatexSvgPainter.PainterResult.Error(err)
-                } else {
-                    // Cache the successful SVG
-                    cache.put(latex, result)
-                    // Convert to Painter
-                    LatexSvgPainter.toPainter(result)
-                }
-            } catch (e: Exception) {
-                val err = "Render exception: ${e.message}"
-                Log.w(TAG, "render fail tex=$latex err=$err", e)
-                LatexSvgPainter.PainterResult.Error(err)
-            }
-        })
-
-        return try {
-            future.get(RENDER_TIMEOUT_MS, TimeUnit.MILLISECONDS)
-        } catch (e: TimeoutException) {
-            future.cancel(true)
-            val err = "Render timeout (>${RENDER_TIMEOUT_MS}ms) for: ${latex.take(50)}"
-            Log.w(TAG, err)
-            LatexSvgPainter.PainterResult.Error(err)
-        } catch (e: Exception) {
-            val err = "Render future exception: ${e.message}"
-            Log.w(TAG, err, e)
-            LatexSvgPainter.PainterResult.Error(err)
+            result
         }
     }
 

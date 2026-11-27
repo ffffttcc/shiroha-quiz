@@ -22,7 +22,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.painter.Painter
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -30,13 +31,13 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.yiqiu.shirohaquiz.ui.text.latex.LatexEngine
-import com.yiqiu.shirohaquiz.ui.text.latex.LatexSvgPainter
+import com.yiqiu.shirohaquiz.ui.text.latex.LatexSvgRenderer
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.runtime.LaunchedEffect
 
 /**
  * Test screen for LaTeX rendering engine (PoC).
- * Shows 12 formulas with rendered SVG and raw LaTeX source.
+ * Shows 12 formulas with rendered Bitmap and raw LaTeX source.
  */
 @Composable
 fun LatexTestScreen(onBack: () -> Unit) {
@@ -63,12 +64,22 @@ fun LatexTestScreen(onBack: () -> Unit) {
         )
 
         val rendered = formulas.map { latex ->
-            val painterResult = LatexEngine.renderPainterBlocking(latex)
-            val (painter, renderError) = when (painterResult) {
-                is LatexSvgPainter.PainterResult.Success -> painterResult.painter to null
-                is LatexSvgPainter.PainterResult.Error -> null to painterResult.message
+            val svgResult = LatexEngine.renderSvgBlocking(latex)
+            val (bitmap, renderError) = when {
+                svgResult == null || svgResult.startsWith("ERR:") -> {
+                    val errMsg = svgResult?.substringAfter("ERR:") ?: "Unknown error"
+                    null to errMsg
+                }
+                else -> {
+                    val bmp = LatexSvgRenderer.render(svgResult, targetHeightPx = 56)
+                    if (bmp == null) {
+                        null to "Bitmap render returned null"
+                    } else {
+                        bmp.asImageBitmap() to null
+                    }
+                }
             }
-            FormulaResult(latex, painter, renderError)
+            FormulaResult(latex, bitmap, renderError)
         }
         results = rendered
     }
@@ -90,7 +101,7 @@ fun LatexTestScreen(onBack: () -> Unit) {
         }
     }
 
-    val successCount = results.count { it.painter != null }
+    val successCount = results.count { it.bitmap != null }
 
     Column(
         modifier = Modifier.fillMaxWidth().padding(16.dp),
@@ -132,25 +143,25 @@ fun LatexTestScreen(onBack: () -> Unit) {
                         modifier = Modifier.padding(16.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        // Rendered SVG
-                        result.painter?.let { painter ->
-                            androidx.compose.foundation.layout.Box(
+                        // Rendered Bitmap
+                        result.bitmap?.let { bmp ->
+                            Box(
                                 modifier = Modifier
-                                    .width(120.dp)
-                                    .height(60.dp)
+                                    .fillMaxWidth()
+                                    .height(56.dp)
                                     .padding(end = 16.dp),
                                 contentAlignment = Alignment.Center
                             ) {
-                                androidx.compose.foundation.Image(
-                                    painter = painter,
+                                Image(
+                                    bitmap = bmp,
                                     contentDescription = null,
                                     contentScale = ContentScale.Fit
                                 )
                             }
-                        } ?: androidx.compose.foundation.layout.Box(
+                        } ?: Box(
                             modifier = Modifier
-                                .width(120.dp)
-                                .height(60.dp)
+                                .fillMaxWidth()
+                                .height(56.dp)
                                 .padding(end = 16.dp),
                             contentAlignment = Alignment.Center
                         ) {
@@ -190,6 +201,6 @@ fun LatexTestScreen(onBack: () -> Unit) {
 
 private data class FormulaResult(
     val latex: String,
-    val painter: Painter?,
+    val bitmap: ImageBitmap?,
     val renderError: String?
 )
