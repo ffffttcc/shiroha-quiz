@@ -119,6 +119,13 @@ object LatexSvgPainter {
     }
 
     /**
+     * Replace currentColor with #000000 in the SVG string.
+     */
+    private fun replaceCurrentColor(svg: String): String {
+        return svg.replace("currentColor", "#000000")
+    }
+
+    /**
      * Aggressive sanitization: remove all style, role, focusable, aria-* attributes.
      * Used as fallback when standard preprocessing fails.
      */
