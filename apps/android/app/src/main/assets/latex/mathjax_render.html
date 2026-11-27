@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>MathJax Renderer</title>
+    <script src="mathjax.bundle.js"></script>
+    <script>
+        // MathJax configuration
+        window.MathJax = {
+            tex: {
+                inlineMath: [['$', '$']],
+                packages: {'[+]': ['mhchem', 'ams', 'color']}
+            },
+            svg: {
+                fontCache: 'local'
+            },
+            startup: {
+                typeset: false,
+                ready: function() {
+                    // Mark as ready after MathJax startup completes
+                    window.__ready = true;
+                }
+            }
+        };
+
+        // Wait for MathJax to be fully ready
+        window.isReady = function() {
+            return !!(window.MathJax && MathJax.startup && MathJax.startup.document && window.__ready);
+        };
+
+        // Batch render function for WebView evaluateJavascript
+        window.renderBatch = function(jsonItems) {
+            try {
+                const items = JSON.parse(jsonItems);
+                const results = [];
+
+                for (const item of items) {
+                    try {
+                        const { id, tex, heightPx, color } = item;
+                        
+                        // Use MathJax.tex2svg to render LaTeX to SVG element
+                        const svgNode = MathJax.tex2svg(tex, { display: true });
+                        
+                        // Get the SVG element
+                        const svg = svgNode.firstChild;
+                        if (!svg || svg.tagName !== 'svg') {
+                            results.push({ id: id, error: 'No SVG produced' });
+                            continue;
+                        }
+
+                        // Calculate dimensions based on viewBox and target height
+                        const vb = svg.getAttribute('viewBox');
+                        let vbWidth = 1608, vbHeight = 836;
+                        if (vb) {
+                            const parts = vb.trim().split(/[\s,]+/).map(Number);
+                            if (parts.length >= 4) {
+                                vbWidth = parts[2];
+                                vbHeight = parts[3];
+                            }
+                        }
+
+                        const dpr = window.devicePixelRatio || 1;
+                        const targetHeight = heightPx * dpr;
+                        const targetWidth = Math.round(targetHeight * vbWidth / vbHeight);
+
+                        // Set explicit width/height on SVG for canvas drawing
+                        svg.setAttribute('width', targetWidth);
+                        svg.setAttribute('height', targetHeight);
+
+                        // Create canvas and draw SVG
+                        const canvas = document.createElement('canvas');
+                        canvas.width = targetWidth;
+                        canvas.height = targetHeight;
+                        const ctx = canvas.getContext('2d');
+
+                        // Fill with transparent background
+                        ctx.clearRect(0, 0, targetWidth, targetHeight);
+
+                        // Convert SVG to data URL and draw
+                        const svgData = new XMLSerializer().serializeToString(svg);
+                        const img = new Image();
+                        
+                        // Use a promise to wait for image load
+                        const promise = new Promise((resolve, reject) => {
+                            img.onload = () => {
+                                ctx.drawImage(img, 0, 0, targetWidth, targetHeight);
+                                const pngBase64 = canvas.toDataURL('image/png').split(',')[1];
+                                resolve({ id: id, pngBase64: pngBase64 });
+                            };
+                            img.onerror = () => reject(new Error('Image load failed'));
+                        });
+
+                        img.src = 'data:image/svg+xml;base64,' + btoa(svgData);
+                        
+                        // Wait for this render to complete (synchronous in practice)
+                        results.push(promise);
+                    } catch (e) {
+                        results.push({ id: item.id, error: e.message || String(e) });
+                    }
+                }
+
+                // Wait for all promises and return JSON
+                Promise.all(results).then(resolved => {
+                    window.__lastRenderResult = JSON.stringify(resolved);
+                }).catch(err => {
+                    window.__lastRenderResult = JSON.stringify([{ id: -1, error: err.message }]);
+                });
+
+                // Return empty string; caller polls for result via getResult()
+                return '';
+            } catch (e) {
+                return JSON.stringify([{ id: -1, error: e.message || String(e) }]);
+            }
+        };
+
+        // Helper to get the last render result
+        window.getResult = function() {
+            const result = window.__lastRenderResult;
+            window.__lastRenderResult = null;
+            return result || '';
+        };
+    </script>
+</head>
+<body>
+    <div id="output"></div>
+</body>
+</html>
