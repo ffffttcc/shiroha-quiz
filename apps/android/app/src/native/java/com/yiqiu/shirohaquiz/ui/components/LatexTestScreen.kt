@@ -96,6 +96,12 @@ fun LatexTestScreen(onBack: () -> Unit) {
                 
                 val errorMsg: String? = if (bmp != null && bmp.width > 0 && bmp.height > 0) null else "render returned null bitmap"
                 
+                // Dump PNG for diagnosis
+                if (bmp != null && bmp.width > 0 && bmp.height > 0) {
+                    val pngDir = File(context.filesDir, "latex_png").apply { mkdirs() }
+                    File(pngDir, "%02d.png".format(i)).outputStream().use { bmp.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) }
+                }
+                
                 // Dump SVG to file for diagnosis
                 val svgDir = File(context.filesDir, "latex_svg").apply { mkdirs() }
                 File(svgDir, "%02d.svg".format(i)).writeText(svg)
