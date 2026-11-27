@@ -7,7 +7,7 @@ import android.util.LruCache
 import android.util.Log
 import com.caverock.androidsvg.SVG
 import com.caverock.androidsvg.SVGParseException
-import kotlin.math.coerceAtLeast
+import kotlin.ranges.coerceAtLeast
 
 /**
  * SVG → Bitmap 渲染器（单一写入者，替代 LatexSvgPainter 的两套尺寸逻辑）。

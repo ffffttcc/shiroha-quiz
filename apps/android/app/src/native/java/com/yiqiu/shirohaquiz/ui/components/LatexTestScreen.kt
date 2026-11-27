@@ -34,6 +34,8 @@ import com.yiqiu.shirohaquiz.ui.text.latex.LatexEngine
 import com.yiqiu.shirohaquiz.ui.text.latex.LatexSvgRenderer
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.ui.unit.Dp
+import kotlin.Result
 
 /**
  * Test screen for LaTeX rendering engine (PoC).
@@ -46,6 +48,9 @@ fun LatexTestScreen(onBack: () -> Unit) {
     var initTimeMs by remember { mutableStateOf<Long>(-1) }
     var initError by remember { mutableStateOf<String?>(null) }
     var results by remember { mutableStateOf<List<FormulaResult>>(emptyList()) }
+
+    // dp -> px 转换（Composable 上下文可用 LocalDensity）
+    val targetHeightPx = remember { 56.dp.roundToPx() }
 
     fun renderFormulas() {
         val formulas = listOf(
@@ -65,15 +70,18 @@ fun LatexTestScreen(onBack: () -> Unit) {
 
         val rendered = formulas.map { latex ->
             val svgResult = LatexEngine.renderSvgString(latex)
-            val (bitmap, renderError) = when (svgResult) {
-                is kotlin.Result.Success -> {
+            val pair: Pair<ImageBitmap?, String?> = when {
+                svgResult.isSuccess -> {
                     val svg = svgResult.getOrNull()
-                    val bmp = svg?.let { LatexSvgRenderer.render(it, 56.dp.roundToPx()) }
+                    val bmp = svg?.let { LatexSvgRenderer.render(it, targetHeightPx) }
                     bmp?.let { it.asImageBitmap() } to null
                 }
-                is kotlin.Result.Failure -> null to svgResult.exceptionOrNull()?.message ?: "Unknown error"
+                else -> {
+                    // Result.Failure is internal; use else branch
+                    null to svgResult.exceptionOrNull()?.message ?: "Unknown error"
+                }
             }
-            FormulaResult(latex, bitmap, renderError)
+            FormulaResult(latex, pair.first, pair.second)
         }
         results = rendered
     }
