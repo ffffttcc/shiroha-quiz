@@ -17,62 +17,70 @@
         MathJax.startup.promise.then(function(){ window.__ready = true; });
         window.isReady = function(){ return window.__ready === true; };
 
-        window.__results = {};
+        window.__lastRenderResult = '';
 
-        window.startBatch = function (jsonItems) {
-            var items = JSON.parse(jsonItems);
-            items.forEach(function (it) {
-                window.__results[it.id] = { id: it.id, pending: true };
-                try {
-                    var svg = MathJax.tex2svg(it.tex, { display: true });
-                    var svgEl = svg.querySelector('svg') || svg;
-                    // 设置字色（currentColor 在 canvas 里会按 style.color 渲染）
-                    if (it.color) svgEl.style.color = it.color;
-                    var vb = (svgEl.getAttribute('viewBox') || '0 0 100 100').trim().split(/[\s,]+/).map(Number);
-                    var vbW = vb[2] || 100, vbH = vb[3] || 100;
-                    var dpr = window.devicePixelRatio || 1;
-                    var h = Math.max(1, Math.round(it.heightPx * dpr));
-                    var w = Math.max(1, Math.round(h * vbW / vbH));
-                    var xml = new XMLSerializer().serializeToString(svgEl);
-                    var dataUri = 'data:image/svg+xml;base64,' + btoa(unescape(encodeURIComponent(xml)));
-                    var img = new Image();
-                    img.onload = function () {
-                        try {
-                            var cv = document.createElement('canvas');
-                            cv.width = w; cv.height = h;
-                            var ctx = cv.getContext('2d');
-                            ctx.clearRect(0, 0, w, h);
-                            ctx.drawImage(img, 0, 0, w, h);
-                            var url = cv.toDataURL('image/png');
-                            window.__results[it.id] = { id: it.id, pngB64: url.substring(url.indexOf(',') + 1), w: w, h: h };
-                        } catch (e) {
-                            window.__results[it.id] = { id: it.id, error: 'RASTER: ' + String(e && e.message ? e.message : e) };
-                        }
-                    };
-                    img.onerror = function () { window.__results[it.id] = { id: it.id, error: 'IMG_LOAD_FAILED' }; };
-                    img.src = dataUri;
-                } catch (e) {
-                    window.__results[it.id] = { id: it.id, error: 'TEX2SVG: ' + String(e && e.message ? e.message : e) };
-                }
-            });
-            return JSON.stringify(items.map(function (it) { return it.id; }));
-        };
-
-        window.getResult = function (id) {
-            var r = window.__results[id];
-            if (!r) return '';
-            if (r.pending) return '';
-            return JSON.stringify(r);
-        };
-
-        window.clearResults = function (idsJson) {
-            try { JSON.parse(idsJson).forEach(function (id) { delete window.__results[id]; }); } catch (e) {}
-            return 'ok';
-        };
-
-        // 旧版 renderBatch 保留但不再使用
         window.renderBatch = function (jsonItems) {
-            return JSON.stringify(JSON.parse(jsonItems).map(function (it) { return { id: it.id, error: 'DEPRECATED_USE_STARTBATCH' }; }));
+            try {
+                var items = JSON.parse(jsonItems);
+                var results = [];
+
+                for (var i = 0; i < items.length; i++) {
+                    var it = items[i];
+                    try {
+                        var svg = MathJax.tex2svg(it.tex, { display: true });
+                        var svgEl = svg.querySelector('svg') || svg;
+                        if (it.color) svgEl.style.color = it.color;
+                        var vb = (svgEl.getAttribute('viewBox') || '0 0 100 100').trim().split(/[\s,]+/).map(Number);
+                        var vbW = vb[2] || 100, vbH = vb[3] || 100;
+                        var dpr = window.devicePixelRatio || 1;
+                        var h = Math.max(1, Math.round(it.heightPx * dpr));
+                        var w = Math.max(1, Math.round(h * vbW / vbH));
+                        var xml = new XMLSerializer().serializeToString(svgEl);
+                        var dataUri = 'data:image/svg+xml;base64,' + btoa(unescape(encodeURIComponent(xml)));
+                        var img = new Image();
+                        img.onload = function () {
+                            try {
+                                var cv = document.createElement('canvas');
+                                cv.width = w; cv.height = h;
+                                var ctx = cv.getContext('2d');
+                                ctx.clearRect(0, 0, w, h);
+                                ctx.drawImage(img, 0, 0, w, h);
+                                var url = cv.toDataURL('image/png');
+                                results.push({ id: it.id, pngBase64: url.substring(url.indexOf(',') + 1) });
+                            } catch (e) {
+                                results.push({ id: it.id, error: 'RASTER: ' + String(e && e.message ? e.message : e) });
+                            }
+                            // Store result when all items done
+                            if (results.length === items.length) {
+                                window.__lastRenderResult = JSON.stringify(results);
+                            }
+                        };
+                        img.onerror = function () {
+                            results.push({ id: it.id, error: 'IMG_LOAD_FAILED' });
+                            if (results.length === items.length) {
+                                window.__lastRenderResult = JSON.stringify(results);
+                            }
+                        };
+                        img.src = dataUri;
+                    } catch (e) {
+                        results.push({ id: it.id, error: 'TEX2SVG: ' + String(e && e.message ? e.message : e) });
+                        if (results.length === items.length) {
+                            window.__lastRenderResult = JSON.stringify(results);
+                        }
+                    }
+                }
+
+                // Return empty string; caller polls via getResult()
+                return '';
+            } catch (e) {
+                return JSON.stringify([{ id: -1, error: 'PARSE: ' + String(e && e.message ? e.message : e) }]);
+            }
+        };
+
+        window.getResult = function () {
+            var r = window.__lastRenderResult;
+            window.__lastRenderResult = '';
+            return r;
         };
     </script>
 </head>
