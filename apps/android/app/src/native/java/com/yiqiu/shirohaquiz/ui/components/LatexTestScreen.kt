@@ -5,19 +5,16 @@ import android.graphics.Bitmap
 import android.graphics.Color
 import android.util.Log
 import androidx.compose.foundation.Image
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.Card
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -43,7 +40,8 @@ import androidx.compose.ui.viewinterop.AndroidView
 import com.yiqiu.shirohaquiz.ui.text.latex.LatexEngine
 import com.yiqiu.shirohaquiz.ui.text.latex.LatexSvgRenderer
 import com.yiqiu.shirohaquiz.ui.text.latex.LatexWebViewRenderer
-import java.io.File
+import android.widget.FrameLayout
+import android.view.Choreographer
 
 /**
  * Test screen for LaTeX rendering engine (PoC).
@@ -53,26 +51,24 @@ import java.io.File
 @Composable
 fun LatexTestScreen(onBack: () -> Unit) {
     val context = LocalContext.current
-    val activity = context as Activity
+    val activity = context as? Activity ?: return
 
-    // State for WebView renderer
-    var webRenderer by remember { mutableStateOf<LatexWebViewRenderer?>(null) }
+    // WebView renderer
+    val renderer = remember { LatexWebViewRenderer(activity) }
     var webReady by remember { mutableStateOf(false) }
     var webInitError by remember { mutableStateOf<String?>(null) }
 
-    // State for QuickJS fallback
+    // QuickJS fallback
     var qsInitDone by remember { mutableStateOf(false) }
     var qsInitTimeMs by remember { mutableStateOf<Long>(-1) }
     var qsInitError by remember { mutableStateOf<String?>(null) }
 
-    // Per-formula results
-    var results by remember { mutableStateOf<List<FormulaResult>>(emptyList()) }
+    // Per-formula results (each has its own mutableState for independent recomposition)
+    val results = remember { mutableStateListOf<FormulaResult>() }
 
-    // dp -> px 转换
     val targetHeightPx = LocalDensity.current.run { 56.dp.roundToPx() }
     val targetHeightDp = 56
 
-    // Test formulas
     val formulas = remember {
         listOf(
             "\\mathbf{B}_{12}",
@@ -90,32 +86,28 @@ fun LatexTestScreen(onBack: () -> Unit) {
         )
     }
 
-    // Create and attach WebView renderer via 1dp AndroidView
+    // 1dp AndroidView to host WebView
     AndroidView(
-        factory = { container ->
-            val renderer = LatexWebViewRenderer(activity)
-            renderer.attach(container)
-            webRenderer = renderer
-            container
+        factory = { ctx ->
+            FrameLayout(ctx).also { host -> renderer.attach(host) }
         },
-        update = { /* no-op */ },
-        modifier = Modifier.height(1.dp)
+        modifier = Modifier.fillMaxWidth().height(1.dp)
     )
 
     // Warm up WebView
     LaunchedEffect(targetHeightPx) {
-        webRenderer?.warmUp { ready ->
+        renderer.warmUp { ready ->
             webReady = ready
             if (!ready) {
                 webInitError = "WEBVIEW_UNSUPPORTED"
-                Log.w("LatexTestScreen", "WebView warm-up failed, will use QuickJS fallback")
+                Log.w("LatexRender", "WebView warm-up failed")
             } else {
-                Log.d("LatexTestScreen", "WebView ready")
+                Log.d("LatexRender", "WebView ready")
             }
         }
     }
 
-    // Initialize QuickJS fallback (always, for comparison/fallback)
+    // Initialize QuickJS fallback
     LaunchedEffect(targetHeightPx) {
         if (!qsInitDone) {
             LatexEngine.init(context)
@@ -125,41 +117,48 @@ fun LatexTestScreen(onBack: () -> Unit) {
             qsInitTimeMs = LatexEngine.getInitTimeMs()
             qsInitError = LatexEngine.getInitError()
             qsInitDone = true
-            Log.d("LatexTestScreen", "QuickJS init: ready=${LatexEngine.isReady()} time=${qsInitTimeMs}ms error=$qsInitError")
+            Log.d("LatexRender", "QuickJS init: ready=${LatexEngine.isReady()} time=${qsInitTimeMs}ms error=$qsInitError")
         }
     }
 
-    // Render formulas when WebView is ready (or fallback)
+    // Render when ready
     LaunchedEffect(key1 = webReady, key2 = qsInitDone) {
         if ((webReady || (qsInitDone && LatexEngine.isReady())) && results.isEmpty()) {
-            renderAllFormulas()
+            renderAll()
         }
     }
 
-    // Release WebView on dispose
+    // Release on dispose
     DisposableEffect(Unit) {
-        onDispose {
-            webRenderer?.release()
-        }
+        onDispose { renderer.release() }
     }
 
-    fun renderAllFormulas() {
-        val renderer = webRenderer
-        val useWeb = renderer != null && webReady
+    fun renderAll() {
+        val useWeb = webReady
 
-        val rendered = formulas.mapIndexed { i, latex ->
-            if (useWeb) {
-                // WebView path: async, we need to wait for each
-                val result = FormulaResult(
-                    latex = latex,
-                    bitmap = null,
-                    renderError = null,
-                    source = "webview"
-                )
-                // We'll update this result via callback
-                result
-            } else {
-                // QuickJS fallback
+        // Initialize results with empty bitmaps
+        val initial = formulas.map { latex ->
+            FormulaResult(latex = latex, source = if (useWeb) "webview" else "quickjs")
+        }
+        results.clear()
+        results.addAll(initial)
+
+        if (useWeb) {
+            formulas.forEachIndexed { idx, latex ->
+                renderer.render(latex, targetHeightPx, 0xFF000000) { bmp, error ->
+                    // Post on animation to update this single item
+                    val updated = results[idx].copy(
+                        bitmap = bmp,
+                        renderError = error
+                    )
+                    Choreographer.getInstance().postFrameCallback {
+                        results[idx] = updated
+                    }
+                }
+            }
+        } else {
+            // QuickJS fallback (synchronous)
+            val fallbackResults = formulas.mapIndexed { idx, latex ->
                 val svgResult = LatexEngine.renderSvgString(latex)
                 if (svgResult.isSuccess) {
                     val svg = svgResult.getOrNull() ?: ""
@@ -167,64 +166,14 @@ fun LatexTestScreen(onBack: () -> Unit) {
                         LatexSvgRenderer.render(svg, targetHeightDp, Color.BLACK)
                     } else null
                     val err = if (bmp != null && bmp.width > 0 && bmp.height > 0) null else "render returned null bitmap"
-                    FormulaResult(
-                        latex = latex,
-                        bitmap = bmp,
-                        renderError = err,
-                        source = "quickjs"
-                    )
+                    FormulaResult(latex = latex, bitmap = bmp, renderError = err, source = "quickjs")
                 } else {
                     val errMsg = svgResult.exceptionOrNull()?.message ?: "Unknown error"
-                    FormulaResult(
-                        latex = latex,
-                        bitmap = null,
-                        renderError = "SVG error: $errMsg",
-                        source = "quickjs"
-                    )
+                    FormulaResult(latex = latex, bitmap = null, renderError = "SVG error: $errMsg", source = "quickjs")
                 }
             }
-        }
-
-        // If WebView, trigger async renders and update state per item
-        if (useWeb) {
-            val mutableResults = rendered.toMutableList()
-            results = mutableResults // initial with null bitmaps
-
-            for ((idx, formula) in formulas.withIndex()) {
-                renderer.render(formula, targetHeightPx, Color.BLACK) { bmp, error ->
-                    val updated = mutableResults[idx].copy(
-                        bitmap = bmp,
-                        renderError = error
-                    )
-                    mutableResults[idx] = updated
-                    // Post on animation to update UI per item
-                    android.view.Choreographer.getInstance().postFrameCallback {
-                        results = mutableResults.toList()
-                    }
-                }
-            }
-        } else {
-            results = rendered
-
-            // Write self-test file for QuickJS path
-            writeSelftestFile()
-        }
-    }
-
-    fun writeSelftestFile() {
-        val sb = StringBuilder()
-        sb.appendLine("webReady=$webReady webInitError=$webInitError")
-        sb.appendLine("qsReady=${LatexEngine.isReady()} qsInitMs=$qsInitTimeMs qsError=$qsInitError")
-        sb.appendLine("targetHeightPx=$targetHeightPx")
-        for (i in results.indices) {
-            val r = results[i]
-            sb.appendLine("[#$i] tex=${r.latex} src=${r.source}")
-            sb.appendLine("  bitmap=${r.bitmap?.width}x${r.bitmap?.height} error=${r.renderError}")
-        }
-        try {
-            File(context.filesDir, "latex_selftest.txt").writeText(sb.toString())
-        } catch (e: Exception) {
-            Log.e("LatexTestScreen", "Failed to write selftest file", e)
+            results.clear()
+            results.addAll(fallbackResults)
         }
     }
 
@@ -257,56 +206,46 @@ fun LatexTestScreen(onBack: () -> Unit) {
         }
 
         // Formula list
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(16.dp)
-                .verticalScroll(rememberScrollState()),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            results.forEach { result ->
+        LazyColumn(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            items(results) { result ->
                 val bmp = result.bitmap
                 Card(modifier = Modifier.fillMaxWidth()) {
-                    Column(
-                        modifier = Modifier.fillMaxWidth().padding(16.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    Row(
+                        modifier = Modifier.padding(16.dp),
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
                         // Rendered Bitmap
                         Box(
                             modifier = Modifier
-                                .fillMaxWidth()
-                                .height(72.dp)
-                                .padding(end = 16.dp)
-                                .background(Color.White),
+                                .width(120.dp)
+                                .height(56.dp)
+                                .padding(end = 16.dp),
                             contentAlignment = Alignment.Center
                         ) {
                             bmp?.let { bitmap ->
                                 Image(
                                     bitmap = bitmap.asImageBitmap(),
                                     contentDescription = null,
-                                    modifier = Modifier
-                                        .fillMaxSize()
-                                        .padding(4.dp),
                                     contentScale = ContentScale.Fit,
-                                    alpha = 1f
+                                    modifier = Modifier.fillMaxSize()
                                 )
                             } ?: Text(
-                                text = "bitmap=null ${result.renderError ?: ""}",
+                                text = result.renderError ?: "ERROR",
+                                fontSize = 12.sp,
                                 color = Color.Red,
-                                fontSize = 12.sp
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis
                             )
                         }
 
-                        // Debug: bitmap dimensions
-                        Text(
-                            text = "bmp=${bmp?.width}x${bmp?.height} [${result.source}]",
-                            fontSize = 10.sp,
-                            color = Color.Gray,
-                            fontFamily = FontFamily.Monospace
-                        )
-
-                        // Raw LaTeX + error
-                        Column(modifier = Modifier.fillMaxWidth()) {
+                        // Source + Debug
+                        Column(modifier = Modifier.weight(1f).fillMaxWidth()) {
+                            Text(
+                                text = "bmp=${bmp?.width}x${bmp?.height} src=${result.source}",
+                                fontSize = 10.sp,
+                                color = Color.Gray,
+                                fontFamily = FontFamily.Monospace
+                            )
                             Text(
                                 text = result.latex,
                                 fontSize = 14.sp,
@@ -334,9 +273,9 @@ fun LatexTestScreen(onBack: () -> Unit) {
 
 private data class FormulaResult(
     val latex: String,
-    val bitmap: Bitmap?,
-    val renderError: String?,
-    val source: String = "webview" // "webview" or "quickjs"
+    val bitmap: Bitmap? = null,
+    val renderError: String? = null,
+    val source: String = "webview"
 ) {
     fun copy(
         latex: String = this.latex,
@@ -345,3 +284,4 @@ private data class FormulaResult(
         source: String = this.source
     ): FormulaResult = FormulaResult(latex, bitmap, renderError, source)
 }
+
