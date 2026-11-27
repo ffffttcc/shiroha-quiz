@@ -96,10 +96,12 @@ fun LatexTestScreen(onBack: () -> Unit) {
                 
                 val errorMsg: String? = if (bmp != null && bmp.width > 0 && bmp.height > 0) null else "render returned null bitmap"
                 
+                // Dump SVG to file for diagnosis
+                val svgDir = File(context.filesDir, "latex_svg").apply { mkdirs() }
+                File(svgDir, "%02d.svg".format(i)).writeText(svg)
+                
                 // Log each bitmap generation for debugging
                 android.util.Log.d("LatexTestScreen", "idx=$i bmp=${bmp?.width}x${bmp?.height} vb=${sanitizedResult.vbWidth}x${sanitizedResult.vbHeight} error=$errorMsg")
-                
-                FormulaResult(
                     latex = latex,
                     bitmap = bmp,
                     renderError = if (bmpWVal > 0 && bmpHVal > 0) null else "render returned null bitmap",
