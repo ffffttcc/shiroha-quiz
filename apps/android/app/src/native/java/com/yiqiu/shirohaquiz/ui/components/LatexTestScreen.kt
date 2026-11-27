@@ -51,7 +51,7 @@ private val FORMULAS = listOf(
 )
 
 @Composable
-fun LatexTestScreen() {
+fun LatexTestScreen(onBack: () -> Unit = {}) {
     val context = LocalContext.current
     val activity = context as? Activity
     val renderer = remember { activity?.let { LatexWebViewRenderer(it) } }

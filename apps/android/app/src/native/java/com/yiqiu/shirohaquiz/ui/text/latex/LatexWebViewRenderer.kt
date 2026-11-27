@@ -7,9 +7,9 @@ import android.os.Handler
 import android.os.Looper
 import android.util.Base64
 import android.util.Log
+import android.util.LruCache
 import android.view.ViewGroup
 import android.webkit.WebView
-import android.webkit.WebSettings
 import android.webkit.WebViewClient
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -52,10 +52,13 @@ class LatexWebViewRenderer(private val activity: Activity) {
     private val renderQueue = ArrayDeque<RenderRequest>()
     private var isProcessing = false
     private val sequenceCounter = AtomicInteger(0)
-    private val lruCache = android.util.LruCache<String, Bitmap>(MAX_CACHE_ENTRIES) {
-        evicted, _, oldValue, _ -> if (evicted) {
-            // Do NOT recycle bitmap, let GC handle it
-            Log.d(TAG, "Bitmap cache evicted (no recycle)")
+    private val lruCache = object : LruCache<String, Bitmap>(MAX_CACHE_ENTRIES) {
+        override fun sizeOf(key: String, value: Bitmap): Int = value.byteCount / 1024
+        override fun entryRemoved(evicted: Boolean, key: String, oldValue: Bitmap, newValue: Bitmap?) {
+            if (evicted) {
+                // Do NOT recycle bitmap, let GC handle it
+                Log.d(TAG, "Bitmap cache evicted (no recycle)")
+            }
         }
     }
 
@@ -185,16 +188,17 @@ class LatexWebViewRenderer(private val activity: Activity) {
 
         Log.d(TAG, "Sending renderBatch seq=${request.sequenceId} tex=${request.latex.take(50)}")
 
-        // 3-second timeout per request
-        val timeoutJob = handler.postDelayed({
+        // 3-second timeout per request - track the Runnable to cancel later
+        val timeoutRunnable = Runnable {
             if (isProcessing && renderQueue.isNotEmpty() && renderQueue.peekFirst()?.sequenceId == request.sequenceId) {
                 Log.w(TAG, "Render timeout seq=${request.sequenceId}")
                 handleJsResult(request.sequenceId, null, "JS_TIMEOUT")
             }
-        }, RENDER_TIMEOUT_MS)
+        }
+        handler.postDelayed(timeoutRunnable, RENDER_TIMEOUT_MS)
 
         webView?.evaluateJavascript("window.renderBatch('$jsonItems')") { jsResult ->
-            timeoutJob.run { if (this != null) handler.removeCallbacks(this) }
+            handler.removeCallbacks(timeoutRunnable)
             // jsResult is empty string; actual result retrieved via getResult()
             pollJsResult(request)
         }
@@ -228,7 +232,7 @@ class LatexWebViewRenderer(private val activity: Activity) {
                                 } else if (obj.has("error")) {
                                     handleJsResult(id, null, "JS_ERROR:${obj.getString("error")}")
                                 }
-                                return
+                                return@poll
                             }
                         }
                         // Our ID not in results yet, keep polling
@@ -255,7 +259,17 @@ class LatexWebViewRenderer(private val activity: Activity) {
         if (request == null || request.sequenceId != sequenceId) {
             Log.w(TAG, "Sequence mismatch: expected ${request?.sequenceId}, got $sequenceId")
             // Try to find and complete the right request
-            renderQueue.removeFirstOrNull { it.sequenceId == sequenceId }?.let { req ->
+            var foundRequest: RenderRequest? = null
+            val iterator = renderQueue.iterator()
+            while (iterator.hasNext()) {
+                val req = iterator.next()
+                if (req.sequenceId == sequenceId) {
+                    foundRequest = req
+                    iterator.remove()
+                    break
+                }
+            }
+            foundRequest?.let { req ->
                 deliverResult(req, pngBase64, error)
             }
             processQueue()
