@@ -1,6 +1,7 @@
 package com.yiqiu.shirohaquiz.ui.components
 
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -70,7 +71,7 @@ fun LatexTestScreen(onBack: () -> Unit) {
             "K_{ZnY}^{\\prime}"
         )
 
-        val rendered = formulas.map { latex ->
+        val rendered = formulas.mapIndexed { i, latex ->
             val svgResult = LatexEngine.renderSvgString(latex)
             if (svgResult.isSuccess) {
                 val svg = svgResult.getOrNull() ?: ""
