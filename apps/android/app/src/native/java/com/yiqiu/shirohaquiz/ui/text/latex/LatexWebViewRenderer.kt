@@ -23,6 +23,9 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.File
+import java.io.FileOutputStream
+import java.security.MessageDigest
 import java.util.ArrayDeque
 import java.util.concurrent.atomic.AtomicInteger
 
@@ -45,6 +48,7 @@ class LatexWebViewRenderer(private val activity: Activity) {
         private const val WARMUP_MAX_ATTEMPTS = 15 // 3 seconds
         private const val RENDER_TIMEOUT_MS = 3000L
         private const val MAX_CACHE_ENTRIES = 60
+        private const val DISK_CACHE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000L // 7 days
     }
 
     private var webView: WebView? = null
@@ -66,6 +70,15 @@ class LatexWebViewRenderer(private val activity: Activity) {
                 Log.d(TAG, "Bitmap cache evicted (no recycle)")
             }
         }
+    }
+
+    // Disk cache for cold-start reuse
+    private val diskDir: File by lazy { File(activity.cacheDir, "latex_cache").apply { mkdirs() } }
+
+    private fun diskKey(latex: String, heightPx: Int, color: Int): String {
+        val md = MessageDigest.getInstance("SHA-1")
+        val h = md.digest("$latex|$heightPx|$color".toByteArray()).joinToString("") { "%02x".format(it) }
+        return "$h-$heightPx.png"
     }
 
     // Coroutine scope for background bitmap decoding
@@ -109,6 +122,8 @@ class LatexWebViewRenderer(private val activity: Activity) {
                     pageLoaded = true
                     Log.d(TAG, "mathjax_render.html loaded")
                     startWarmUpPolling()
+                    // Clean old disk cache files on startup
+                    cleanOldDiskCache()
                 }
             }
 
@@ -197,12 +212,42 @@ class LatexWebViewRenderer(private val activity: Activity) {
             return
         }
         val cacheKey = "$latex|$heightPx|$color"
+
+        // 1) Memory cache (LruCache)
         lruCache.get(cacheKey)?.let { cached ->
-            Log.d(TAG, "Cache hit for: ${latex.take(40)}")
+            Log.d(TAG, "Memory cache hit for: ${latex.take(40)}")
             handler.post { onResult(cached, null) }
             return
         }
 
+        // 2) Disk cache
+        val diskFile = File(diskDir, diskKey(latex, heightPx, color))
+        if (diskFile.exists() && diskFile.length() > 0) {
+            Log.d(TAG, "Disk cache hit for: ${latex.take(40)}")
+            Thread {
+                val bmp = runCatching { BitmapFactory.decodeFile(diskFile.absolutePath) }.getOrNull()
+                handler.post {
+                    if (bmp != null && !destroyed) {
+                        lruCache.put(cacheKey, bmp)
+                        onResult(bmp, null)
+                    } else {
+                        // Disk file corrupted, fall through to render
+                        enqueueRender(latex, heightPx, color, onResult, cacheKey)
+                    }
+                }
+            }.start()
+            return
+        }
+
+        // 3) Enqueue for WebView rendering
+        enqueueRender(latex, heightPx, color, onResult, cacheKey)
+    }
+
+    private fun enqueueRender(latex: String, heightPx: Int, color: Int, onResult: (Bitmap?, String?) -> Unit, cacheKey: String) {
+        if (destroyed) {
+            onResult(null, "WEBVIEW_DESTROYED")
+            return
+        }
         val seqId = sequenceCounter.incrementAndGet()
         val request = RenderRequest(seqId, latex, heightPx, color, onResult)
         renderQueue.add(request)
@@ -361,6 +406,8 @@ class LatexWebViewRenderer(private val activity: Activity) {
                             if (bitmap != null && bitmap.width > 0 && bitmap.height > 0) {
                                 val cacheKey = "${request.latex}|${request.heightPx}|${request.color}"
                                 lruCache.put(cacheKey, bitmap)
+                                // Write to disk cache (async, non-blocking)
+                                writeDiskCache(bitmap, cacheKey, request.latex, request.heightPx, request.color)
                                 request.onResult(bitmap, null)
                             } else {
                                 request.onResult(null, "DECODE_FAILED")
@@ -381,6 +428,51 @@ class LatexWebViewRenderer(private val activity: Activity) {
                 request.onResult(null, "DECODE_FAILED")
             }
         }
+    }
+
+    private fun writeDiskCache(bitmap: Bitmap, cacheKey: String, latex: String, heightPx: Int, color: Int) {
+        Thread {
+            runCatching {
+                val name = diskKey(latex, heightPx, color)
+                val dst = File(diskDir, name)
+                val tmp = File(diskDir, "${name}.tmp")
+                FileOutputStream(tmp).use { os ->
+                    bitmap.compress(Bitmap.CompressFormat.PNG, 100, os)
+                }
+                tmp.renameTo(dst)
+                Log.d(TAG, "Disk cache written: $name")
+            }
+        }.start()
+    }
+
+    private fun cleanOldDiskCache() {
+        Thread {
+            runCatching {
+                val now = System.currentTimeMillis()
+                diskDir.listFiles()?.forEach { file ->
+                    if (file.isFile && (now - file.lastModified()) > DISK_CACHE_MAX_AGE_MS) {
+                        file.delete()
+                        Log.d(TAG, "Deleted old disk cache: ${file.name}")
+                    }
+                }
+            }
+        }.start()
+    }
+
+    /**
+     * Clear disk cache (for debugging/testing).
+     */
+    fun clearDiskCache() {
+        Thread {
+            runCatching {
+                diskDir.listFiles()?.forEach { file ->
+                    if (file.isFile) {
+                        file.delete()
+                    }
+                }
+                Log.d(TAG, "Disk cache cleared")
+            }
+        }.start()
     }
 
     /**
