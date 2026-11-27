@@ -63,7 +63,8 @@ class LatexWebViewRenderer(private val activity: Activity) {
     }
 
     // Coroutine scope for background bitmap decoding
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val scopeJob = SupervisorJob()
+    private val scope = CoroutineScope(scopeJob + Dispatchers.IO)
 
     /**
      * Request holder for the serial queue.
@@ -209,7 +210,7 @@ class LatexWebViewRenderer(private val activity: Activity) {
      */
     private fun pollJsResult(request: RenderRequest) {
         val startTime = System.currentTimeMillis()
-        fun poll() {
+        fun doPoll() {
             if (System.currentTimeMillis() - startTime > RENDER_TIMEOUT_MS) {
                 Log.w(TAG, "Poll timeout seq=${request.sequenceId}")
                 handleJsResult(request.sequenceId, null, "JS_TIMEOUT")
@@ -237,20 +238,21 @@ class LatexWebViewRenderer(private val activity: Activity) {
                                 break
                             }
                         }
-                        if (found) return@poll
-                        // Our ID not in results yet, keep polling
-                        handler.postDelayed(Runnable { poll() }, 50)
+                        if (!found) {
+                            // Our ID not in results yet, keep polling
+                            handler.postDelayed(Runnable { doPoll() }, 50)
+                        }
                     } catch (e: Exception) {
                         Log.w(TAG, "Parse JS result failed: ${e.message}, raw=$resultStr")
-                        handler.postDelayed(Runnable { poll() }, 50)
+                        handler.postDelayed(Runnable { doPoll() }, 50)
                     }
                 } else {
                     // No result yet, keep polling
-                    handler.postDelayed(Runnable { poll() }, 50)
+                    handler.postDelayed(Runnable { doPoll() }, 50)
                 }
             }
         }
-        poll()
+        doPoll()
     }
 
     /**
@@ -322,7 +324,7 @@ class LatexWebViewRenderer(private val activity: Activity) {
      * Must call from onDestroy / DisposableEffect onDispose.
      */
     fun release() {
-        scope.cancel()
+        scopeJob.cancel()
         handler.removeCallbacksAndMessages(null)
         webView?.apply {
             destroy()
