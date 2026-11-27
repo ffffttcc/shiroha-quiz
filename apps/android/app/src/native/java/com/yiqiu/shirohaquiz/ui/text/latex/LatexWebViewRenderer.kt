@@ -15,6 +15,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 import org.json.JSONArray
@@ -324,7 +325,7 @@ class LatexWebViewRenderer(private val activity: Activity) {
      * Must call from onDestroy / DisposableEffect onDispose.
      */
     fun release() {
-        scope.cancel()
+        scope.coroutineContext.cancel()
         handler.removeCallbacksAndMessages(null)
         webView?.apply {
             destroy()
