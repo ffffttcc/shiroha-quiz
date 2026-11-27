@@ -207,7 +207,8 @@ object SvgPathRenderer {
                             val m = parseTransform(transformStr)
                             // Debug: log transform string and resulting matrix (first 5 only)
                             if (transformLogs.size < 5) {
-                                val vals = m.values
+                                val vals = FloatArray(9)
+                                m.getValues(vals)
                                 transformLogs.add("transform=\"$transformStr\" -> [${vals.joinToString(",")}]")
                             }
                             val result = Matrix()
