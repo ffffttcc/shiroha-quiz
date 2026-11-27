@@ -5,13 +5,15 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Card
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -201,47 +203,60 @@ fun LatexTestScreen(onBack: () -> Unit) {
             }
         }
 
-        // Formula list
-        LazyColumn(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            items(results) { result ->
+        // Formula list - 使用 Column + verticalScroll 替代 LazyColumn，确保所有项立即组合
+        val scrollState = rememberScrollState()
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .verticalScroll(scrollState)
+                .padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            results.forEach { result ->
                 Card(modifier = Modifier.fillMaxWidth()) {
-                    Row(
-                        modifier = Modifier.padding(16.dp),
-                        verticalAlignment = Alignment.CenterVertically
+                    Column(
+                        modifier = Modifier.fillMaxWidth().padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        // Rendered Bitmap
-                        result.bitmap?.let { bmp ->
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .height(56.dp)
-                                    .padding(end = 16.dp),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Image(
-                                    bitmap = bmp,
-                                    contentDescription = null,
-                                    contentScale = ContentScale.Fit
-                                )
-                            }
-                        } ?: Box(
+                        // Rendered Bitmap - 固定高度 72dp，内容居中显示
+                        val bmp = result.bitmap
+                        val bmpW = bmp?.width ?: 0
+                        val bmpH = bmp?.height ?: 0
+                        
+                        Box(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .height(56.dp)
+                                .height(72.dp)
                                 .padding(end = 16.dp),
                             contentAlignment = Alignment.Center
                         ) {
-                            Text(
-                                text = "渲染失败: ${result.renderError ?: "unknown(见自检文件)"}",
-                                fontSize = 12.sp,
+                            bmp?.let { bmp ->
+                                Image(
+                                    bitmap = bmp.asImageBitmap(),
+                                    contentDescription = null,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .heightIn(max = 72.dp),
+                                    contentScale = ContentScale.Fit,
+                                    alpha = 1f
+                                )
+                            } ?: Text(
+                                text = "bitmap=null",
                                 color = Color.Red,
-                                maxLines = 2,
-                                overflow = TextOverflow.Ellipsis
+                                fontSize = 12.sp
                             )
                         }
+                        
+                        // 调试信息：显示 bitmap 实际尺寸
+                        Text(
+                            text = "bmp=${bmp?.width}x${bmp?.height}",
+                            fontSize = 10.sp,
+                            color = Color.Gray,
+                            fontFamily = FontFamily.Monospace
+                        )
 
                         // Raw LaTeX source + render error
-                        Column(modifier = Modifier.weight(1f).fillMaxWidth()) {
+                        Column(modifier = Modifier.fillMaxWidth()) {
                             Text(
                                 text = result.latex,
                                 fontSize = 14.sp,
@@ -269,7 +284,7 @@ fun LatexTestScreen(onBack: () -> Unit) {
 
 private data class FormulaResult(
     val latex: String,
-    val bitmap: ImageBitmap?,
+    val bitmap: android.graphics.Bitmap?,
     val renderError: String?,
     val svgOk: Boolean = false,
     val svgLen: Int = 0,
