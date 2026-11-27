@@ -70,20 +70,6 @@ fun LatexTestScreen(onBack: () -> Unit) {
 
         val rendered = formulas.map { latex ->
             val svgResult = LatexEngine.renderSvgString(latex)
-            val bitmap: ImageBitmap?
-            val error: String?
-            val svgOk: Boolean
-            val svgLen: Int
-            val svgHead: String
-            val sanitizedHead: String
-            val vbW: Float
-            val vbH: Float
-            val targetH: Int
-            val bmpW: Int
-            val bmpH: Int
-            val errorMsg: String?
-
-            val svgResult = LatexEngine.renderSvgString(latex)
             if (svgResult.isSuccess) {
                 val svg = svgResult.getOrNull() ?: ""
                 val svgOkFlag = !svg.isBlank()
