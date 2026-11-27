@@ -324,7 +324,7 @@ class LatexWebViewRenderer(private val activity: Activity) {
      * Must call from onDestroy / DisposableEffect onDispose.
      */
     fun release() {
-        scopeJob.cancel()
+        scope.cancel()
         handler.removeCallbacksAndMessages(null)
         webView?.apply {
             destroy()
