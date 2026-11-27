@@ -63,11 +63,10 @@ fun LatexTestScreen(onBack: () -> Unit) {
         )
 
         val rendered = formulas.map { latex ->
-            val svgOrError = LatexEngine.renderSvgBlocking(latex)
-            val (painter, renderError) = if (svgOrError != null && svgOrError.startsWith("ERR:")) {
-                null to svgOrError.substring(4)
-            } else {
-                svgOrError?.let { LatexSvgPainter.toPainter(it) } to null
+            val painterResult = LatexEngine.renderPainterBlocking(latex)
+            val (painter, renderError) = when (painterResult) {
+                is LatexSvgPainter.PainterResult.Success -> painterResult.painter to null
+                is LatexSvgPainter.PainterResult.Error -> null to painterResult.message
             }
             FormulaResult(latex, painter, renderError)
         }
