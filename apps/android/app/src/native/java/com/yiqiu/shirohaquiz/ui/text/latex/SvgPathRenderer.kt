@@ -41,7 +41,7 @@ object SvgPathRenderer {
         for (match in pattern.findAll(transformStr)) {
             val fn = match.groupValues[1]
             val argsStr = match.groupValues[2]
-            val args = argsStr.split(Regex("""[\\s,]+""")).filter { it.isNotBlank() }.map { it.toFloat() }
+            val args = argsStr.split(Regex("""[\s,]+""")).filter { it.isNotBlank() }.map { it.toFloat() }
             val m = Matrix()
             when (fn) {
                 "translate" -> {
@@ -211,7 +211,7 @@ object SvgPathRenderer {
 
                         if (tag == "svg") {
                             val vbStr = parser.getAttributeValue(null, "viewBox") ?: "0 0 100 100"
-                            val parts = vbStr.trim().split(Regex("""[\\s,]+""")).mapNotNull { it.toFloatOrNull() }
+                            val parts = vbStr.trim().split(Regex("""[\s,]+""")).mapNotNull { it.toFloatOrNull() }
                             if (parts.size >= 4) {
                                 viewBox.set(parts[0], parts[1], parts[0] + parts[2], parts[1] + parts[3])
                             }
