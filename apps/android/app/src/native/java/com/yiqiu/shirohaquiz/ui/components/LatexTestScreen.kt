@@ -230,6 +230,7 @@ fun LatexTestScreen(onBack: () -> Unit) {
                             contentAlignment = Alignment.Center
                         ) {
                             bmp?.let { bmp ->
+                                // 优先用 Image，若不生效可改 Canvas 手绘
                                 Image(
                                     bitmap = bmp.asImageBitmap(),
                                     contentDescription = null,
