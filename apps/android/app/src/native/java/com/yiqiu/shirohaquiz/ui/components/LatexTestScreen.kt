@@ -94,10 +94,10 @@ fun LatexTestScreen(onBack: () -> Unit) {
                 val bmpWVal = bmp?.width ?: 0
                 val bmpHVal = bmp?.height ?: 0
                 
+                val errorMsg: String? = if (bmp != null && bmp.width > 0 && bmp.height > 0) null else "render returned null bitmap"
+                
                 // Log each bitmap generation for debugging
                 android.util.Log.d("LatexTestScreen", "idx=$i bmp=${bmp?.width}x${bmp?.height} vb=${sanitizedResult.vbWidth}x${sanitizedResult.vbHeight} error=$errorMsg")
-                
-                val errorMsg: String? = if (bmpWVal > 0 && bmpHVal > 0) null else "render returned null bitmap"
                 
                 FormulaResult(
                     latex = latex,
