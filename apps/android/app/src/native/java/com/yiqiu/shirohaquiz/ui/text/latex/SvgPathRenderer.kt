@@ -211,7 +211,7 @@ object SvgPathRenderer {
 
                         if (tag == "svg") {
                             val vbStr = parser.getAttributeValue(null, "viewBox") ?: "0 0 100 100"
-                            val parts = vbStr.split(Regex("""[\\s,]+""")).map { it.toFloat() }
+                            val parts = vbStr.trim().split(Regex("""[\\s,]+""")).mapNotNull { it.toFloatOrNull() }
                             if (parts.size >= 4) {
                                 viewBox.set(parts[0], parts[1], parts[0] + parts[2], parts[1] + parts[3])
                             }
