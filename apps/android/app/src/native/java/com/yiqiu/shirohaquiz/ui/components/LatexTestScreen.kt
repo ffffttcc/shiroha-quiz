@@ -108,9 +108,11 @@ fun LatexTestScreen(onBack: () -> Unit) {
                 
                 // Log each bitmap generation for debugging
                 android.util.Log.d("LatexTestScreen", "idx=$i bmp=${bmp?.width}x${bmp?.height} vb=${sanitizedResult.vbWidth}x${sanitizedResult.vbHeight} error=$errorMsg")
+                
+                FormulaResult(
                     latex = latex,
                     bitmap = bmp,
-                    renderError = if (bmpWVal > 0 && bmpHVal > 0) null else "render returned null bitmap",
+                    renderError = if (bmp != null && bmp.width > 0 && bmp.height > 0) null else "render returned null bitmap",
                     svgOk = svgOkFlag,
                     svgLen = svg.length,
                     svgHead = svg.take(200),
@@ -118,9 +120,9 @@ fun LatexTestScreen(onBack: () -> Unit) {
                     vbW = sanitizedResult.vbWidth,
                     vbH = sanitizedResult.vbHeight,
                     targetH = 56,
-                    bmpW = bmpWVal,
-                    bmpH = bmpHVal,
-                    error = if (bmpWVal > 0 && bmpHVal > 0) null else "render returned null bitmap"
+                    bmpW = bmp?.width ?: 0,
+                    bmpH = bmp?.height ?: 0,
+                    error = if (bmp != null && bmp.width > 0 && bmp.height > 0) null else "render returned null bitmap"
                 )
             } else {
                 val errMsg = svgResult.exceptionOrNull()?.message ?: "Unknown error"
@@ -213,26 +215,25 @@ fun LatexTestScreen(onBack: () -> Unit) {
             }
         }
 
-        // Formula list - 使用 Column + verticalScroll 替代 LazyColumn，确保所有项立即组合
-        val scrollState = rememberScrollState()
+        // Formula list
         Column(
             modifier = Modifier
-                .fillMaxSize()
-                .verticalScroll(scrollState)
-                .padding(16.dp),
+                .fillMaxWidth()
+                .padding(16.dp)
+                .verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             results.forEach { result ->
+                val bmp = result.bitmap
+                val bmpW = bmp?.width ?: 0
+                val bmpH = bmp?.height ?: 0
+                
                 Card(modifier = Modifier.fillMaxWidth()) {
                     Column(
                         modifier = Modifier.fillMaxWidth().padding(16.dp),
                         verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         // Rendered Bitmap - 固定高度 72dp，内容居中显示
-                        val bmp = result.bitmap
-                        val bmpW = bmp?.width ?: 0
-                        val bmpH = bmp?.height ?: 0
-                        
                         Box(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -241,7 +242,7 @@ fun LatexTestScreen(onBack: () -> Unit) {
                                 .background(Color.White),
                             contentAlignment = Alignment.Center
                         ) {
-                            bmp?.let { bmp ->
+                            result.bitmap?.let { bmp ->
                                 // 优先用 Image，若不生效可改 Canvas 手绘
                                 Image(
                                     bitmap = bmp.asImageBitmap(),
