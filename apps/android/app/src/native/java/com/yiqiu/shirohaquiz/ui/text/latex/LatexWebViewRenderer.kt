@@ -45,7 +45,7 @@ class LatexWebViewRenderer(private val activity: Activity) {
     companion object {
         private const val TAG = "LatexRender"
         private const val WARMUP_POLL_INTERVAL_MS = 200L
-        private const val WARMUP_MAX_ATTEMPTS = 15 // 3 seconds
+        private const val WARMUP_MAX_ATTEMPTS = 75 // 15 seconds
         private const val RENDER_TIMEOUT_MS = 3000L
         private const val MAX_CACHE_ENTRIES = 60
         private const val DISK_CACHE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000L // 7 days
@@ -120,7 +120,7 @@ class LatexWebViewRenderer(private val activity: Activity) {
                 super.onPageFinished(view, url)
                 if (url?.startsWith("file:///android_asset/latex/mathjax_render.html") == true) {
                     pageLoaded = true
-                    Log.d(TAG, "mathjax_render.html loaded")
+                    Log.d(TAG, "onPageFinished url=$url")
                     startWarmUpPolling()
                     // Clean old disk cache files on startup
                     cleanOldDiskCache()
@@ -128,13 +128,15 @@ class LatexWebViewRenderer(private val activity: Activity) {
             }
 
             override fun onReceivedError(view: WebView?, request: WebResourceRequest?, error: WebResourceError?) {
-                Log.e(TAG, "WebView load error: ${error?.description}")
-                pageLoadFailed = true
+                val main = request?.isForMainFrame == true
+                Log.e(TAG, "onReceivedError main=$main url=${request?.url} desc=${error?.description}")
+                if (main) pageLoadFailed = true
             }
 
             override fun onReceivedHttpError(view: WebView?, request: WebResourceRequest?, errorResponse: WebResourceResponse?) {
-                Log.e(TAG, "WebView http error: ${errorResponse?.statusCode} ${request?.url}")
-                pageLoadFailed = true
+                val main = request?.isForMainFrame == true
+                Log.e(TAG, "onReceivedHttpError main=$main url=${request?.url} code=${errorResponse?.statusCode}")
+                if (main) pageLoadFailed = true
             }
         }
         webView = wv
@@ -501,4 +503,11 @@ class LatexWebViewRenderer(private val activity: Activity) {
 
     /** Check if WebView is ready for rendering. */
     fun isReady(): Boolean = isReady
+
+    /**
+     * Returns a diagnostic string for debugging warmUp failures.
+     */
+    fun diagnostic(): String {
+        return "pageLoaded=$pageLoaded pageLoadFailed=$pageLoadFailed ready=$isReady url=${webView?.url} progress=${webView?.progress}"
+    }
 }

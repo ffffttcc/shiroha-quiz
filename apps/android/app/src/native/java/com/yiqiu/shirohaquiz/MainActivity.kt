@@ -112,7 +112,7 @@ class MainActivity : ComponentActivity() {
             val warmUpMs = System.currentTimeMillis() - warmUpStartMs
             Log.d("LatexRender", "selftest warmUp=$ok warmUpMs=$warmUpMs")
             if (!ok) {
-                writeSelfTest("warmUp FAILED warmUpMs=$warmUpMs")
+                writeSelfTest("warmUp FAILED warmUpMs=$warmUpMs " + renderer.diagnostic())
                 renderer.release()
                 rootGroup.removeView(host)
                 return@warmUp
