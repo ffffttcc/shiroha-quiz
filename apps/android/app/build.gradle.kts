@@ -131,6 +131,7 @@ dependencies {
     add("nativeImplementation", "ru.noties:jlatexmath-android-font-greek:0.2.0")
     // Also add to testNativeImplementation for Robolectric tests that compile native sources
     testImplementation("junit:junit:4.13.2")
+    testImplementation("org.scilab.forge:jlatexmath:1.0.5")
     add("testNativeImplementation", "net.sf.kxml:kxml2:2.3.0")
     add("testNativeImplementation", "org.robolectric:robolectric:4.12.2")
     add("testNativeImplementation", "org.jetbrains.kotlinx:kotlinx-coroutines-test:1.7.1")
