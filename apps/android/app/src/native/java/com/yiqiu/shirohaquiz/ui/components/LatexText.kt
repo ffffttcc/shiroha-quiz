@@ -2,6 +2,7 @@ package com.yiqiu.shirohaquiz.ui.components
 
 import android.graphics.Bitmap
 import android.graphics.Color as AndroidColor
+import android.util.Log
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -62,6 +63,7 @@ fun LatexText(
                     }
                     
                     if (bmp != null) {
+                        Log.d("LatexTextDbg", "tex=[${seg.tex}] bmp=${bmp!!.width}x${bmp.height}")
                         Image(
                             bitmap = bmp!!.asImageBitmap(),
                             contentDescription = null,
@@ -71,6 +73,7 @@ fun LatexText(
                             contentScale = ContentScale.Fit
                         )
                     } else if (err != null) {
+                        err?.let { Log.d("LatexTextDbg", "tex=[${seg.tex}] err=$it") }
                         Text(
                             text = "$${seg.tex}$$",
                             fontSize = 14.sp,
