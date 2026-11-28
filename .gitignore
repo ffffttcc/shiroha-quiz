@@ -111,3 +111,7 @@ docs/development/
 
 # Web AI regression runtime reports
 test/web-ai-practice/reports/
+
+# Keystore artifacts
+apps/android/app/debug.keystore
+*.keystore
