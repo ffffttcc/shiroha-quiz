@@ -66,7 +66,7 @@ fun LatexText(
                         Image(
                             bitmap = bmp!!.asImageBitmap(),
                             contentDescription = null,
-                            modifier = Modifier.height(heightPx.dp)
+                            modifier = Modifier.height(heightPx.dp).width((heightPx * 2).dp)
                         )
                     } else if (err != null) {
                         err?.let { Log.d("LatexTextDbg", "tex=[${seg.tex}] err=$it") }
