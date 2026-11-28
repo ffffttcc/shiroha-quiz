@@ -20,9 +20,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlin.math.roundToInt
 import com.yiqiu.shirohaquiz.ui.text.latex.LatexWebViewRenderer
 
 @Composable
@@ -50,10 +52,12 @@ fun LatexText(
                     var bmp by remember { mutableStateOf<Bitmap?>(null) }
                     var err by remember { mutableStateOf<String?>(null) }
                     
-                    LaunchedEffect(seg.tex, renderer) {
+                    val density = LocalDensity.current.density
+                    LaunchedEffect(seg.tex, renderer, density) {
                         bmp = null
                         err = null
-                        renderer?.render(seg.tex, heightPx, AndroidColor.BLACK) { bitmap, error ->
+                        val px = (heightPx * density).roundToInt()
+                        renderer?.render(seg.tex, px, AndroidColor.BLACK) { bitmap, error ->
                             bmp = bitmap
                             err = error
                         }
