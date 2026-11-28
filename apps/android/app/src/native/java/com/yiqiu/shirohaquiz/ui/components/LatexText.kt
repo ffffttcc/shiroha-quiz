@@ -2,7 +2,7 @@ package com.yiqiu.shirohaquiz.ui.components
 
 import android.graphics.Bitmap
 import android.graphics.Color as AndroidColor
-import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.text.InlineTextContent
 import androidx.compose.foundation.text.appendInlineContent
 import androidx.compose.material3.Text
@@ -13,7 +13,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
-import androidx.compose.ui.graphics.drawImage
+import androidx.compose.ui.graphics.painter.rememberImagePainter
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.Placeholder
 import androidx.compose.ui.text.PlaceholderVerticalAlign
@@ -60,17 +60,16 @@ fun LatexText(
             segments.forEachIndexed { i, seg ->
                 val bmp = bitmaps[i] ?: return@forEachIndexed
                 put("f$i", InlineTextContent(
-                    Placeholder(
+                    placeholder = Placeholder(
                         width = with(density) { bmp.width.toDp() },
                         height = with(density) { bmp.height.toDp() },
                         placeholderVerticalAlign = PlaceholderVerticalAlign.TextCenter
                     )
-                ) { range ->
-                    Canvas(
-                        modifier = Modifier.size(range.placeholder.width, range.placeholder.height)
-                    ) {
-                        drawImage(image = bmp.asImageBitmap())
-                    }
+                ) { _ ->
+                    Image(
+                        painter = rememberImagePainter(bmp.asImageBitmap()),
+                        contentDescription = null
+                    )
                 }
             }
         },
