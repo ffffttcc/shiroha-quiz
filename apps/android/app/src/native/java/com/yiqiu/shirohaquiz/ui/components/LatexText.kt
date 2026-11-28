@@ -13,7 +13,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
-import androidx.compose.ui.graphics.painter.rememberImagePainter
+import androidx.compose.ui.graphics.painter.BitmapPainter
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.Placeholder
 import androidx.compose.ui.text.PlaceholderVerticalAlign
@@ -33,7 +33,8 @@ fun LatexText(
 ) {
     val density = LocalDensity.current
     val segments = remember(text) { splitLatex(text) }
-    var bitmaps by remember { mutableStateOf<Map<Int, Bitmap>>(emptyMap()) }
+    val bitmapsState = remember { mutableStateOf(emptyMap<Int, Bitmap>()) }
+    val bitmaps = bitmapsState.value
 
     LaunchedEffect(segments, renderer, heightPx) {
         val map = mutableMapOf<Int, Bitmap>()
@@ -44,7 +45,7 @@ fun LatexText(
                 }
             }
         }
-        bitmaps = map
+        bitmapsState.value = map
     }
 
     Text(
@@ -67,7 +68,7 @@ fun LatexText(
                     )
                 ) { _ ->
                     Image(
-                        painter = rememberImagePainter(bmp.asImageBitmap()),
+                        painter = BitmapPainter(bmp.asImageBitmap()),
                         contentDescription = null
                     )
                 }
