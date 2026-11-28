@@ -117,19 +117,19 @@ class LatexWebViewRenderer(private val activity: Activity) {
      */
     private fun processQueue() {
         if (destroyed || isProcessing || renderQueue.isEmpty()) return
-        val request = renderQueue.peekFirst() ?: return
+        val peekRequest = renderQueue.peekFirst() ?: return
         isProcessing = true
 
         // Render synchronously using JLaTeXMath
-        val bmp = JLatexMathRenderer.render(request.latex, request.heightPx, request.color)
+        val bmp = JLatexMathRenderer.render(peekRequest.latex, peekRequest.heightPx, peekRequest.color)
 
         isProcessing = false
-        val request = renderQueue.pollFirst() ?: return
+        val pollRequest = renderQueue.pollFirst() ?: return
         if (bmp != null && bmp.width > 0 && bmp.height > 0) {
-            lruCache.put("$request.latex|${request.heightPx}|${request.color}", bmp)
-            handler.post { request.onResult(bmp, null) }
+            lruCache.put("$pollRequest.latex|${pollRequest.heightPx}|${pollRequest.color}", bmp)
+            handler.post { pollRequest.onResult(bmp, null) }
         } else {
-            handler.post { request.onResult(null, "JLATEX_FAILED") }
+            handler.post { pollRequest.onResult(null, "JLATEX_FAILED") }
         }
         processQueue()
     }
