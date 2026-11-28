@@ -103,7 +103,39 @@ sealed class Segment {
     data class Formula(val tex: String) : Segment()
 }
 
-internal fun splitLatex(text: String): List<Segment> {
+private val BARE_LATEX_CMD = Regex("""\\(?:mathrm|frac|sqrt|ce|text|mathit)\b""")
+
+private fun wrapBareLatex(src: String): String {
+    val sb = StringBuilder(src.length + 16)
+    var i = 0
+    var inDollar = false
+    while (i < src.length) {
+        val c = src[i]
+        if (c == '$') { inDollar = !inDollar; sb.append(c); i++; continue }
+        if (!inDollar) {
+            val m = BARE_LATEX_CMD.find(src, i)
+            if (m != null && m.range.first == i) {
+                var j = i
+                var depth = 0
+                while (j < src.length) {
+                    val ch = src[j]
+                    if (ch == '{') { depth++; j++; continue }
+                    if (ch == '}') { depth--; j++; continue }
+                    if (depth == 0 && (ch == ' ' || ch == '\u3000' || ch == '\n' || ch == '\r' || ch == '$' || ch in '\u4e00'..'\u9fff')) break
+                    j++
+                }
+                sb.append('$').append(src, i, j).append('$')
+                i = j
+                continue
+            }
+        }
+        sb.append(c); i++
+    }
+    return sb.toString()
+}
+
+internal fun splitLatex(rawText: String): List<Segment> {
+    val text = wrapBareLatex(rawText)
     val result = mutableListOf<Segment>()
     var i = 0
     val len = text.length
