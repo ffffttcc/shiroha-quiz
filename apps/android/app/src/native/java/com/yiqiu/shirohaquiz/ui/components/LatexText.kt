@@ -15,12 +15,14 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.rememberImagePainter
 import androidx.compose.ui.text.Placeholder
 import androidx.compose.ui.text.PlaceholderVerticalAlign
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.unit.toDp
 import com.yiqiu.shirohaquiz.ui.text.latex.LatexWebViewRenderer
 
 @Composable
@@ -32,7 +34,7 @@ fun LatexText(
 ) {
     val density = LocalDensity.current
     val segments = remember(text) { splitLatex(text) }
-    var bitmaps by remember { mutableStateOf(emptyMap<Int, Bitmap>()) }
+    var bitmaps by remember { mutableStateOf<Map<Int, Bitmap>>(emptyMap()) }
 
     LaunchedEffect(segments, renderer, heightPx) {
         val map = mutableMapOf<Int, Bitmap>()
@@ -65,7 +67,10 @@ fun LatexText(
                         PlaceholderVerticalAlign.TextCenter
                     )
                 ) { _ ->
-                    Image(bitmap = bmp.asImageBitmap(), contentDescription = null)
+                    Image(
+                        painter = rememberImagePainter(bmp.asImageBitmap()),
+                        contentDescription = null
+                    )
                 }
             }
         },
