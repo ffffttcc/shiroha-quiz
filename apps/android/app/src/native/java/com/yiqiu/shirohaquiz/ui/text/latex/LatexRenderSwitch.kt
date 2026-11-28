@@ -9,10 +9,10 @@ import androidx.compose.ui.unit.sp
 import com.yiqiu.shirohaquiz.ui.components.LatexText
 import com.yiqiu.shirohaquiz.ui.text.LatexDisplayFormatter
 
-/** 全局公式渲染开关：默认关闭，验证通过后再打开。 */
+/** 全局公式渲染开关：默认开启，JLaTeXMath 同步渲染。 */
 object LatexRenderSwitch {
     @Volatile
-    var enabled: Boolean = false
+    var enabled: Boolean = true
 }
 
 /** 由 App 根提供渲染器实例；为 null 时自动回退纯文本。 */
