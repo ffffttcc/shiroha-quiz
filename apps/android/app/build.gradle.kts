@@ -126,8 +126,9 @@ dependencies {
     implementation("com.google.android.material:material:1.12.0")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     add("nativeImplementation", "androidx.work:work-runtime-ktx:2.9.1")
-    // LaTeX rendering engine (PoC)
-    add("nativeImplementation", "io.github.taoweiji.quickjs:quickjs-android:1.4.6")
+    // LaTeX rendering engine (PoC) - JLaTeXMath (pure Java, no WebView)
+    add("nativeImplementation", "ru.noties:jlatexmath-android:0.2.0")
+    add("nativeImplementation", "ru.noties:jlatexmath-android-font-greek:0.2.0")
     // Also add to testNativeImplementation for Robolectric tests that compile native sources
     testImplementation("junit:junit:4.13.2")
     add("testNativeImplementation", "net.sf.kxml:kxml2:2.3.0")
