@@ -84,6 +84,11 @@ jobs:
       # configures a signing config when that file exists (app/build.gradle.kts
       # signingConfigs block). The repo does not ship keystore.properties and this
       # workflow uses no secrets, so release is intentionally not built here.
+      - name: Restore debug keystore
+        run: |
+          mkdir -p apps/android/app
+          echo "${{ secrets.ANDROID_DEBUG_KEYSTORE }}" | base64 -d > apps/android/app/debug.keystore
+          ls -l apps/android/app/debug.keystore
       - name: Build native debug APK
         run: ./gradlew --no-daemon --stacktrace :app:assembleNativeDebug
 
