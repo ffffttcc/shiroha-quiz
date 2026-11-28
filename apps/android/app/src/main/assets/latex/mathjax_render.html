@@ -4,6 +4,23 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width,initial-scale=1">
     <script>
+        window.__bootError = '';
+        window.onerror = function (msg, src, line, col, err) {
+            window.__bootError = String(msg) + ' @' + (src || '') + ':' + line + ':' + col;
+            return true;
+        };
+        // CommonJS shim: this bundle is built for Node/CommonJS environment
+        if (typeof window.require === 'undefined') {
+            window.require = function (id) {
+                if (id === 'path') return { resolve: function () { return '/tmp'; }, join: function () { return '/tmp'; } };
+                return {};
+            };
+        }
+        if (typeof window.__dirname === 'undefined') { window.__dirname = '/tmp'; }
+        if (typeof window.module === 'undefined') { window.module = { exports: {} }; }
+        if (typeof window.exports === 'undefined') { window.exports = window.module.exports; }
+    </script>
+    <script>
         window.MathJax = {
             tex: {
                 inlineMath: [['$','$']],
@@ -15,11 +32,26 @@
             options: { enableMenu: false }
         };
     </script>
-    <script src="mathjax.bundle.js"></script>
+    <script src="mathjax.bundle.js" onload="markReady()" onerror="window.__bootError='bundle 404/load error'"></script>
     <script>
         window.__ready = false;
-        MathJax.startup.promise.then(function(){ window.__ready = true; });
-        window.isReady = function(){ return window.__ready === true; };
+        window.__bootError = '';
+
+        function markReady() {
+            try {
+                if (window.MathJax && MathJax.startup && MathJax.startup.promise) {
+                    MathJax.startup.promise.then(function () { window.__ready = true; })
+                        .catch(function (e) { window.__bootError = 'startup: ' + e; });
+                } else {
+                    window.__bootError = window.__bootError || ('MathJax undefined, typeof=' + (typeof window.MathJax));
+                }
+            } catch (e) { window.__bootError = 'markReady: ' + e; }
+        }
+
+        window.isReady = function () {
+            if (window.__ready === true) return 'true';
+            return 'false|' + (window.__bootError || ('MathJax=' + (typeof window.MathJax) + ',renderLatex=' + (typeof window.renderLatex)));
+        };
 
         window.__lastRenderResult = '';
 

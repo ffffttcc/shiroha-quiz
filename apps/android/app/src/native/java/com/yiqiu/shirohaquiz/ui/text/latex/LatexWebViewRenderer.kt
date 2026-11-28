@@ -58,6 +58,7 @@ class LatexWebViewRenderer(private val activity: Activity) {
     private var pageLoadFailed = false
     private var warmUpCallback: ((Boolean) -> Unit)? = null
     private var warmUpAttempts = 0
+    private var lastBootError: String = ""
     private val handler = Handler(Looper.getMainLooper())
     private val renderQueue = ArrayDeque<RenderRequest>()
     private var isProcessing = false
@@ -178,20 +179,23 @@ class LatexWebViewRenderer(private val activity: Activity) {
             handler.postDelayed({ startWarmUpPolling() }, WARMUP_POLL_INTERVAL_MS)
             return
         }
-        webView?.evaluateJavascript("window.isReady && window.isReady()") { value ->
+        webView?.evaluateJavascript("window.isReady()") { value ->
             if (destroyed) {
                 warmUpCallback?.invoke(false)
                 warmUpCallback = null
                 return@evaluateJavascript
             }
             val v = value?.trim()?.trim('"')
-            if (v == "true") {
+            if (v != null && v.startsWith("true")) {
                 isReady = true
                 Log.d(TAG, "WebView warm-up complete, MathJax ready")
                 warmUpCallback?.invoke(true)
                 warmUpCallback = null
                 processQueue()
             } else {
+                // Parse error from "false|error message" format
+                lastBootError = if (v != null && v.startsWith("false|")) v.substring(6) else v ?: "unknown"
+                Log.w(TAG, "WebView not ready: $lastBootError")
                 handler.postDelayed({ startWarmUpPolling() }, WARMUP_POLL_INTERVAL_MS)
             }
         }
@@ -508,6 +512,6 @@ class LatexWebViewRenderer(private val activity: Activity) {
      * Returns a diagnostic string for debugging warmUp failures.
      */
     fun diagnostic(): String {
-        return "pageLoaded=$pageLoaded pageLoadFailed=$pageLoadFailed ready=$isReady url=${webView?.url} progress=${webView?.progress}"
+        return "pageLoaded=$pageLoaded pageLoadFailed=$pageLoadFailed ready=$isReady url=${webView?.url} progress=${webView?.progress} bootError=$lastBootError"
     }
 }
