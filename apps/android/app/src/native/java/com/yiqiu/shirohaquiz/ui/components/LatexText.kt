@@ -30,7 +30,7 @@ fun LatexText(
     text: String,
     renderer: LatexWebViewRenderer? = null,
     modifier: Modifier = Modifier,
-    heightPx: Int = 40
+    heightPx: Int = 22
 ) {
     val segments = remember(text) { splitLatex(text) }
     
@@ -63,10 +63,12 @@ fun LatexText(
                         bmp?.let {
                             Log.d("LatexTextDbg", "tex=[${seg.tex}] bmp=${it.width}x${it.height}")
                         }
+                        val bmpNonNull = bmp!!
+                        val wDp = if (bmpNonNull.height > 0) heightPx * bmpNonNull.width / bmpNonNull.height else heightPx * 2
                         Image(
-                            bitmap = bmp!!.asImageBitmap(),
+                            bitmap = bmpNonNull.asImageBitmap(),
                             contentDescription = null,
-                            modifier = Modifier.height(heightPx.dp).width((heightPx * 2).dp)
+                            modifier = Modifier.height(heightPx.dp).width(wDp.dp)
                         )
                     } else if (err != null) {
                         err?.let { Log.d("LatexTextDbg", "tex=[${seg.tex}] err=$it") }

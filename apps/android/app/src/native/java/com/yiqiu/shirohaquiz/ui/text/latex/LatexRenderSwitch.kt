@@ -26,7 +26,7 @@ fun LatexTextOrFallback(
     text: String,
     modifier: Modifier = Modifier,
     style: TextStyle = TextStyle(fontSize = 14.sp),
-    heightPx: Int = 40
+    heightPx: Int = 22
 ) {
     val renderer = LocalLatexRenderer.current
     if (LatexRenderSwitch.enabled && renderer != null) {
