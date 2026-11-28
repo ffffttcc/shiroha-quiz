@@ -2,8 +2,7 @@ package com.yiqiu.shirohaquiz.ui.components
 
 import android.graphics.Bitmap
 import android.graphics.Color as AndroidColor
-import android.util.Log
-import androidx.compose.foundation.Image
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.text.InlineTextContent
 import androidx.compose.foundation.text.appendInlineContent
 import androidx.compose.material3.Text
@@ -14,8 +13,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.drawImage
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.platform.rememberImagePainter
 import androidx.compose.ui.text.Placeholder
 import androidx.compose.ui.text.PlaceholderVerticalAlign
 import androidx.compose.ui.text.buildAnnotatedString
@@ -62,15 +61,16 @@ fun LatexText(
                 val bmp = bitmaps[i] ?: return@forEachIndexed
                 put("f$i", InlineTextContent(
                     Placeholder(
-                        with(density) { bmp.width.toDp() },
-                        with(density) { bmp.height.toDp() },
-                        PlaceholderVerticalAlign.TextCenter
+                        width = with(density) { bmp.width.toDp() },
+                        height = with(density) { bmp.height.toDp() },
+                        placeholderVerticalAlign = PlaceholderVerticalAlign.TextCenter
                     )
-                ) { _ ->
-                    Image(
-                        painter = rememberImagePainter(bmp.asImageBitmap()),
-                        contentDescription = null
-                    )
+                ) { range ->
+                    Canvas(
+                        modifier = Modifier.size(range.placeholder.width, range.placeholder.height)
+                    ) {
+                        drawImage(image = bmp.asImageBitmap())
+                    }
                 }
             }
         },
