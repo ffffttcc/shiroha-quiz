@@ -63,7 +63,9 @@ fun LatexText(
                     }
                     
                     if (bmp != null) {
-                        Log.d("LatexTextDbg", "tex=[${seg.tex}] bmp=${bmp!!.width}x${bmp.height}")
+                        bmp?.let {
+                            Log.d("LatexTextDbg", "tex=[${seg.tex}] bmp=${it.width}x${it.height}")
+                        }
                         Image(
                             bitmap = bmp!!.asImageBitmap(),
                             contentDescription = null,
