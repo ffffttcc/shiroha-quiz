@@ -46,8 +46,16 @@ fun LatexText(
         bitmaps = map
     }
 
-    val inlineContents = remember(segments, bitmaps, density) {
-        buildMap {
+    Text(
+        text = buildAnnotatedString {
+            segments.forEachIndexed { i, seg ->
+                when (seg) {
+                    is Segment.Plain -> append(seg.text)
+                    is Segment.Formula -> if (bitmaps.containsKey(i)) appendInlineContent("f$i", alternateText = seg.tex) else append(seg.tex)
+                }
+            }
+        },
+        inlineContent = buildMap {
             segments.forEachIndexed { i, seg ->
                 val bmp = bitmaps[i] ?: return@forEachIndexed
                 put("f$i", InlineTextContent(
@@ -59,24 +67,8 @@ fun LatexText(
                 ) { _ ->
                     Image(bitmap = bmp.asImageBitmap(), contentDescription = null)
                 }
-            )
-        }
-    }
-
-    val annotated = remember(segments, bitmaps) {
-        buildAnnotatedString {
-            segments.forEachIndexed { i, seg ->
-                when (seg) {
-                    is Segment.Plain -> append(seg.text)
-                    is Segment.Formula -> if (bitmaps.containsKey(i)) appendInlineContent("f$i", alternateText = seg.tex) else append(seg.tex)
-                }
             }
-        }
-    }
-
-    Text(
-        text = annotated,
-        inlineContent = inlineContents,
+        },
         modifier = modifier,
         color = Color(0xFF1A1A2E),
         fontSize = 14.sp,
