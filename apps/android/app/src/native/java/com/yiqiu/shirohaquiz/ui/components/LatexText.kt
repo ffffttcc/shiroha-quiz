@@ -32,7 +32,7 @@ fun LatexText(
 ) {
     val density = LocalDensity.current
     val segments = remember(text) { splitLatex(text) }
-    var bitmaps by remember { mutableStateOf(emptyMap<Map<Int, Bitmap>>()) }
+    var bitmaps by remember { mutableStateOf(emptyMap<Int, Bitmap>()) }
 
     LaunchedEffect(segments, renderer, heightPx) {
         val map = mutableMapOf<Int, Bitmap>()
@@ -50,19 +50,16 @@ fun LatexText(
         buildMap {
             segments.forEachIndexed { i, seg ->
                 val bmp = bitmaps[i] ?: return@forEachIndexed
-                val bmpWidth = bmp.width
-                val bmpHeight = bmp.height
                 put("f$i", InlineTextContent(
-                    placeholder = Placeholder(
-                        width = with(density) { bmpWidth.toDp() },
-                        height = with(density) { bmpHeight.toDp() },
-                        placeholderVerticalAlign = PlaceholderVerticalAlign.TextCenter
-                    ),
-                    content = { _ ->
-                        Image(bitmap = bmp.asImageBitmap(), contentDescription = null)
-                    }
-                ))
-            }
+                    Placeholder(
+                        with(density) { bmp.width.toDp() },
+                        with(density) { bmp.height.toDp() },
+                        PlaceholderVerticalAlign.TextCenter
+                    )
+                ) { _ ->
+                    Image(bitmap = bmp.asImageBitmap(), contentDescription = null)
+                }
+            )
         }
     }
 
