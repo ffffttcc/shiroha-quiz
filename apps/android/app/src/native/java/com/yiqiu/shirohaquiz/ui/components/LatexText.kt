@@ -2,26 +2,27 @@ package com.yiqiu.shirohaquiz.ui.components
 
 import android.graphics.Bitmap
 import android.graphics.Color as AndroidColor
+import android.util.Log
 import androidx.compose.foundation.Image
-import androidx.compose.foundation.text.InlineTextContent
-import androidx.compose.foundation.text.appendInlineContent
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
-import androidx.compose.ui.graphics.painter.BitmapPainter
-import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.text.Placeholder
-import androidx.compose.ui.text.PlaceholderVerticalAlign
-import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.unit.toDp
 import com.yiqiu.shirohaquiz.ui.text.latex.LatexWebViewRenderer
 
 @Composable
@@ -31,55 +32,67 @@ fun LatexText(
     modifier: Modifier = Modifier,
     heightPx: Int = 40
 ) {
-    val density = LocalDensity.current
     val segments = remember(text) { splitLatex(text) }
-    val bitmapsState = remember { mutableStateOf(emptyMap<Int, Bitmap>()) }
-    val bitmaps = bitmapsState.value
-
-    LaunchedEffect(segments, renderer, heightPx) {
-        val map = mutableMapOf<Int, Bitmap>()
-        segments.forEachIndexed { i, seg ->
-            if (seg is Segment.Formula) {
-                renderer?.render(seg.tex, heightPx, AndroidColor.BLACK) { bmp, _ ->
-                    if (bmp != null) map[i] = bmp
+    
+    Row(modifier = modifier, verticalAlignment = Alignment.CenterVertically) {
+        segments.forEachIndexed { idx, seg ->
+            when (seg) {
+                is Segment.Plain -> {
+                    Text(
+                        text = seg.text,
+                        fontSize = 14.sp,
+                        color = Color(0xFF1A1A2E),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
                 }
+                is Segment.Formula -> {
+                    var bmp by remember { mutableStateOf<Bitmap?>(null) }
+                    var err by remember { mutableStateOf<String?>(null) }
+                    
+                    LaunchedEffect(seg.tex, renderer) {
+                        bmp = null
+                        err = null
+                        renderer?.render(seg.tex, heightPx, AndroidColor.BLACK) { bitmap, error ->
+                            bmp = bitmap
+                            err = error
+                        }
+                    }
+                    
+                    if (bmp != null) {
+                        bmp?.let {
+                            Log.d("LatexTextDbg", "tex=[${seg.tex}] bmp=${it.width}x${it.height}")
+                        }
+                        Image(
+                            bitmap = bmp!!.asImageBitmap(),
+                            contentDescription = null,
+                            modifier = Modifier.height(heightPx.dp)
+                        )
+                    } else if (err != null) {
+                        err?.let { Log.d("LatexTextDbg", "tex=[${seg.tex}] err=$it") }
+                        Text(
+                            text = "$${seg.tex}$$",
+                            fontSize = 14.sp,
+                            color = Color(0xFFCC0000),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    } else {
+                        Text(
+                            text = "$${seg.tex}$$",
+                            fontSize = 14.sp,
+                            color = Color(0xFF888888),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                }
+            }
+            if (idx < segments.lastIndex) {
+                androidx.compose.foundation.layout.Spacer(modifier = Modifier.padding(top = 4.dp))
             }
         }
-        bitmapsState.value = map
     }
-
-    Text(
-        text = buildAnnotatedString {
-            segments.forEachIndexed { i, seg ->
-                when (seg) {
-                    is Segment.Plain -> append(seg.text)
-                    is Segment.Formula -> if (bitmaps.containsKey(i)) appendInlineContent("f$i", alternateText = seg.tex) else append(seg.tex)
-                }
-            }
-        },
-        inlineContent = buildMap {
-            segments.forEachIndexed { i, seg ->
-                val bmp = bitmaps[i] ?: return@forEachIndexed
-                put("f$i", InlineTextContent(
-                    placeholder = Placeholder(
-                        width = with(density) { bmp.width.toDp() },
-                        height = with(density) { bmp.height.toDp() },
-                        placeholderVerticalAlign = PlaceholderVerticalAlign.TextCenter
-                    )
-                ) { _ ->
-                    Image(
-                        painter = BitmapPainter(bmp.asImageBitmap()),
-                        contentDescription = null
-                    )
-                }
-            }
-        },
-        modifier = modifier,
-        color = Color(0xFF1A1A2E),
-        fontSize = 14.sp,
-        maxLines = 1,
-        overflow = TextOverflow.Ellipsis
-    )
 }
 
 sealed class Segment {
@@ -124,7 +137,7 @@ internal fun splitLatex(rawText: String): List<Segment> {
     var i = 0
     val len = text.length
     val plainBuf = StringBuilder()
-
+    
     while (i < len) {
         val ch = text[i]
         if (ch == '$') {
@@ -178,11 +191,11 @@ internal fun splitLatex(rawText: String): List<Segment> {
             i++
         }
     }
-
+    
     if (plainBuf.isNotEmpty()) {
         result.add(Segment.Plain(plainBuf.toString()))
     }
-
+    
     val merged = mutableListOf<Segment>()
     for (seg in result) {
         if (seg is Segment.Plain) {
